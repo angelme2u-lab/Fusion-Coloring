@@ -167,6 +167,13 @@ HTML = """<!DOCTYPE html>
   .mandala { flex:none; vertical-align:middle; }
   .stepicon { flex:none; vertical-align:middle; }
   details.step summary .stepicon { align-self:center; }
+  .tplcard { background:#fff; border:2px solid var(--forest); border-radius:12px; padding:1rem 1.2rem; margin-bottom:1.2rem; }
+  .tplcard h3 { margin:0 0 .3rem; font-size:1.15rem; }
+  .tplcard p { margin:.2rem 0 .8rem; font-size:.92rem; opacity:.8; }
+  .tplrow { display:flex; align-items:center; gap:.6rem; }
+  .tplrow label { margin:0; }
+  .tplrow input { width:4.5rem; }
+  .tplrow button { width:auto; margin:0; padding:.65rem 1.2rem; white-space:nowrap; }
   h2.sub .mandala { margin-right:.45rem; }
   details.step summary .mandala { align-self:center; }
   .masthead .mandala { margin:0 .1rem; }
@@ -361,6 +368,16 @@ HTML = """<!DOCTYPE html>
     <details class="step">
       <summary>%ICON_02%<span class="n">02</span> Story & front matter</summary>
       <div class="stepbody">
+            <div class="tplcard">
+              <h3>📖 Start an Elinor-style storybook</h3>
+              <p>Title page, belongs-to page, welcome page — then chapter spreads where each coloring page faces its story page, pre-styled with chapter title, ornament, and History Note. Select a blank plate, describe it in Step 01, and Compose fills it in.</p>
+              <div class="tplrow">
+                <label for="tplch">Chapters</label>
+                <input id="tplch" type="number" value="5" min="1" max="20">
+                <button id="tplbuild" type="button">Begin my storybook</button>
+              </div>
+              <p class="status" id="tplstatus"></p>
+            </div>
             <h2 class="sub">%%MANDALA_MED%%Story pages</h2>
             <p>Write the story that faces each coloring page — chapter by chapter, like a coloring-story book.</p>
             <label for="stitle">Chapter title</label>
@@ -1016,11 +1033,20 @@ document.getElementById('compose').onclick = async () => {
     });
     const data = await res.json();
     if (!res.ok) { status.textContent = data.error || 'Failed.'; return; }
-    book.push({ kind: 'art', image: data.image, caption: subject });
-    renderCount();
-    renderThumbs();
-    show(book.length - 1);
-    status.textContent = 'Plate pressed. Change the sentence, then press once more.';
+    const cur = book[current];
+    if (cur && cur.kind === 'art' && !cur.image) {
+      cur.image = data.image;
+      cur.caption = subject;
+      renderThumbs();
+      show(current);
+      status.textContent = 'Plate filled. Select the next blank plate for the following scene.';
+    } else {
+      book.push({ kind: 'art', image: data.image, caption: subject });
+      renderCount();
+      renderThumbs();
+      show(book.length - 1);
+      status.textContent = 'Plate pressed. Change the sentence, then press once more.';
+    }
   } catch (e) {
     status.textContent = (e && e.name === 'AbortError')
       ? 'The press took too long. Press compose once more.'
@@ -1302,6 +1328,29 @@ document.getElementById('fmCopyright').onclick = () => {
 };
 document.getElementById('fmWelcome').onclick = () => addFront('welcome', { title: 'Welcome', body: '' });
 document.getElementById('fmBelongs').onclick = () => addFront('belongsto', {});
+
+/* ---- Elinor-style storybook template ---- */
+document.getElementById('tplbuild').onclick = () => {
+  const st = document.getElementById('tplstatus');
+  if (book.length && !confirm('Add the Elinor-style layout to your current book? Nothing already there is removed.')) return;
+  const n = Math.max(1, Math.min(20, parseInt(document.getElementById('tplch').value, 10) || 5));
+  const ctitle = document.getElementById('ctitle').value.trim();
+  const csub = document.getElementById('csubtitle').value.trim();
+  const cauth = document.getElementById('cauthor').value.trim();
+  const fresh = () => ({ kind: 'story', variant: 'story', title: '', subtitle: '', body: '', note: '', publisher: '' });
+  book.push(Object.assign(fresh(), { variant: 'titlepage', title: ctitle || 'Book Title', subtitle: csub, publisher: cauth }));
+  book.push(Object.assign(fresh(), { variant: 'belongsto' }));
+  book.push(Object.assign(fresh(), { variant: 'welcome', title: 'Welcome' }));
+  for (let c = 1; c <= n; c++) {
+    book.push({ kind: 'art', caption: 'Chapter ' + c + ' — coloring page' });
+    book.push(Object.assign(fresh(), { title: 'Chapter ' + c }));
+  }
+  renderCount();
+  renderThumbs();
+  show(0);
+  st.textContent = 'Storybook frame built: 3 front-matter pages + ' + n +
+    ' chapter spreads. Select a blank plate, describe it in Step 01, and Compose fills it in.';
+};
 
 document.getElementById('sorn').onchange = () => {
   const st = document.getElementById('sstatus');
