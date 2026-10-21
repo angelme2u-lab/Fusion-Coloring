@@ -1,0 +1,8 @@
+# One-click deploy for Render.com (free tier works; the app is stdlib-only).
+# In Render: New > Blueprint > point at the repo containing this file.
+services:
+  - type: web
+    name: fusion-coloring
+    env: docker
+    plan: free
+    healthCheckPath: /
