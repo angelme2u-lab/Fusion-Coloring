@@ -11,49 +11,143 @@ except ImportError:
     _PILImage = None
     HAS_PIL = False
 
-# Decorative mandala ornaments (inline SVG, jewel tones). Drawn by the app
+# Decorative mandala ornaments (inline SVG, flower-bright). Drawn by the app
 # itself: no image files, no loading, no cost. Used only in the decorative
-# chrome (masthead, step markers, section headers, canvas bar, empty state) --
-# never inside text fields and never over artwork.
-_MANDALA_COLORS = ["#D9554A", "#D9A441", "#2A9D8F", "#7B4B94", "#3F6B4C"]
+# chrome (masthead, step markers, section headers, canvas bar) -- never inside
+# text fields and never over artwork.
+# Each entry: (deep edge, saturated base, light heart) for a hand-colored look.
+_MANDALA_PETALS = [
+    ("#B03A2E", "#E0604F", "#F2A090"),  # coral
+    ("#B97A1F", "#E8A93D", "#F6CE7E"),  # marigold
+    ("#1A7A70", "#26A69A", "#7FD1C7"),  # teal
+    ("#6A3F80", "#8E5AA8", "#C09AD6"),  # violet
+    ("#97344F", "#C94F6D", "#E89BB0"),  # rose
+    ("#3F7034", "#5A9E4B", "#9CCB8F"),  # leaf
+]
 
 def mandala_svg(size, petals=12):
     import math
-    cols = _MANDALA_COLORS
+    cols = _MANDALA_PETALS
     parts = ['<svg class="mandala" width="%d" height="%d" viewBox="-100 -100 200 200" '
              'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="mandala ornament">'
              % (size, size)]
+    # outer confetti dots
     dots = []
     for i in range(petals * 2):
         a = math.radians(i * 360.0 / (petals * 2))
-        dots.append('<circle cx="%.1f" cy="%.1f" r="3.2" fill="%s" opacity="0.85"/>'
-                    % (92 * math.cos(a), 92 * math.sin(a), cols[i % len(cols)]))
+        dots.append('<circle cx="%.1f" cy="%.1f" r="3.4" fill="%s" opacity="0.9"/>'
+                    % (93 * math.cos(a), 93 * math.sin(a), cols[i % len(cols)][1]))
     parts.append("<g>" + "".join(dots) + "</g>")
-    for i in range(petals):
-        a = i * 360.0 / petals
-        parts.append('<g transform="rotate(%.1f)"><path d="M0,-78 C16,-56 16,-29 0,-14 '
-                     'C-16,-29 -16,-56 0,-78 Z" fill="%s" opacity="0.8"/></g>'
-                     % (a, cols[i % len(cols)]))
+    # leaf ring tucked between the big petals
     for i in range(petals):
         a = i * 360.0 / petals + 360.0 / petals / 2
-        parts.append('<g transform="rotate(%.1f)"><path d="M0,-52 C13,-38 13,-21 0,-10 '
-                     'C-13,-21 -13,-38 0,-52 Z" fill="%s" opacity="0.9"/></g>'
-                     % (a, cols[(i + 2) % len(cols)]))
-    parts.append('<circle r="30" fill="none" stroke="#3F6B4C" stroke-width="2.5" opacity="0.7"/>')
-    parts.append('<circle r="24" fill="none" stroke="#D9A441" stroke-width="1.5" opacity="0.7" stroke-dasharray="4 3"/>')
-    for i in range(8):
-        parts.append('<g transform="rotate(%d)"><path d="M0,-22 C8,-16 8,-9 0,-5 '
-                     'C-8,-9 -8,-16 0,-22 Z" fill="%s" opacity="0.95"/></g>'
-                     % (i * 45, cols[(i + 1) % len(cols)]))
-    parts.append('<circle r="7" fill="#3F6B4C"/><circle r="3" fill="#FFFDF9"/>')
+        dk, bs, _lt = cols[5]
+        parts.append('<g transform="rotate(%.1f)"><path d="M0,-72 C9,-62 9,-48 0,-38 '
+                     'C-9,-48 -9,-62 0,-72 Z" fill="%s" stroke="%s" stroke-width="1.2" '
+                     'opacity="0.85"/></g>' % (a, bs, dk))
+    # big flower petals: saturated base, deep edge, light heart
+    for i in range(petals):
+        dk, bs, lt = cols[i % len(cols)]
+        a = i * 360.0 / petals
+        parts.append('<g transform="rotate(%.1f)">'
+                     '<path d="M0,-82 C21,-71 24,-40 0,-13 C-24,-40 -21,-71 0,-82 Z" '
+                     'fill="%s" stroke="%s" stroke-width="1.6" opacity="0.92"/>'
+                     '<path d="M0,-64 C11,-57 12,-36 0,-22 C-12,-36 -11,-57 0,-64 Z" '
+                     'fill="%s" opacity="0.85"/></g>' % (a, bs, dk, lt))
+    # middle bloom ring, offset
+    for i in range(petals):
+        dk, bs, lt = cols[(i + 3) % len(cols)]
+        a = i * 360.0 / petals + 360.0 / petals / 2
+        parts.append('<g transform="rotate(%.1f)">'
+                     '<path d="M0,-50 C14,-43 15,-24 0,-11 C-15,-24 -14,-43 0,-50 Z" '
+                     'fill="%s" stroke="%s" stroke-width="1.3" opacity="0.94"/>'
+                     '<path d="M0,-38 C7,-33 7,-21 0,-14 C-7,-21 -7,-33 0,-38 Z" '
+                     'fill="%s" opacity="0.9"/></g>' % (a, bs, dk, lt))
+    # scalloped ring
+    scal = []
+    for i in range(24):
+        a = math.radians(i * 15)
+        scal.append('<circle cx="%.1f" cy="%.1f" r="2.6" fill="%s" opacity="0.8"/>'
+                    % (33 * math.cos(a), 33 * math.sin(a), cols[i % len(cols)][1]))
+    parts.append("<g>" + "".join(scal) + "</g>")
+    parts.append('<circle r="28" fill="#FFFDF9" stroke="#3F6B4C" stroke-width="2" opacity="0.9"/>')
+    # center rosette
+    for i in range(10):
+        dk, bs, _lt = cols[(i + 1) % len(cols)]
+        parts.append('<g transform="rotate(%d)">'
+                     '<path d="M0,-24 C9,-19 10,-9 0,-4 C-10,-9 -9,-19 0,-24 Z" '
+                     'fill="%s" stroke="%s" stroke-width="1" opacity="0.95"/></g>'
+                     % (i * 36, bs, dk))
+    parts.append('<circle r="6.5" fill="#3F6B4C"/><circle r="2.8" fill="#FFFDF9"/>')
     parts.append("</svg>")
     return "".join(parts)
 
 MANDALA_HEAD = mandala_svg(76)    # masthead flanks
-MANDALA_SM = mandala_svg(38)      # step markers
 MANDALA_MED = mandala_svg(52)     # section headers
 MANDALA_BAR = mandala_svg(34)     # canvas bar
-MANDALA_BIG = mandala_svg(190)    # empty state
+
+# Storybook step icons: one emblem per step (palette, quill, pages, book,
+# crown). Same inline-SVG approach as the mandalas.
+def _icon_open(size):
+    return ('<svg class="stepicon" width="%d" height="%d" viewBox="0 0 100 100" '
+            'xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">' % (size, size))
+
+def icon_palette(size=44):
+    dots = [("#E0604F", 34, 38), ("#E8A93D", 52, 30), ("#26A69A", 66, 42),
+            ("#8E5AA8", 60, 60), ("#5A9E4B", 40, 58)]
+    s = [_icon_open(size)]
+    s.append('<ellipse cx="50" cy="52" rx="38" ry="34" fill="#E8C98F" stroke="#8A5A2B" stroke-width="3"/>')
+    for c, x, y in dots:
+        s.append('<circle cx="%d" cy="%d" r="8" fill="%s" stroke="#1A1916" '
+                 'stroke-width="1.5" opacity="0.95"/>' % (x, y, c))
+    s.append('<ellipse cx="68" cy="72" rx="9" ry="7" fill="#F3EEE6" stroke="#8A5A2B" stroke-width="2.5"/>')
+    s.append('</svg>')
+    return "".join(s)
+
+def icon_quill(size=44):
+    return (_icon_open(size) +
+            '<path d="M52,92 C34,66 30,30 72,8 C64,34 62,62 52,92 Z" fill="#FFFDF9" '
+            'stroke="#3F6B4C" stroke-width="3"/>'
+            '<path d="M52,92 C50,60 56,32 72,8" fill="none" stroke="#3F6B4C" stroke-width="2.5"/>'
+            '<path d="M50,62 L40,58 M51,50 L41,46 M53,38 L44,34" stroke="#3F6B4C" stroke-width="2"/>'
+            '<path d="M52,92 L46,98 L58,94 Z" fill="#1A1916"/>'
+            '</svg>')
+
+def icon_pages(size=44):
+    return (_icon_open(size) +
+            '<rect x="30" y="18" width="44" height="56" rx="3" fill="#D9A441" stroke="#8A5A2B" stroke-width="2.5"/>'
+            '<rect x="24" y="26" width="44" height="56" rx="3" fill="#26A69A" stroke="#1A7A70" stroke-width="2.5"/>'
+            '<rect x="18" y="34" width="44" height="56" rx="3" fill="#FFFDF9" stroke="#3F6B4C" stroke-width="2.5"/>'
+            '<line x1="26" y1="48" x2="54" y2="48" stroke="#3F6B4C" stroke-width="2.5"/>'
+            '<line x1="26" y1="58" x2="54" y2="58" stroke="#3F6B4C" stroke-width="2.5"/>'
+            '<line x1="26" y1="68" x2="48" y2="68" stroke="#3F6B4C" stroke-width="2.5"/>'
+            '</svg>')
+
+def icon_book(size=44):
+    return (_icon_open(size) +
+            '<path d="M50,30 C40,22 24,20 14,24 L14,78 C24,74 40,76 50,84 C60,76 76,74 86,78 L86,24 '
+            'C76,20 60,22 50,30 Z" fill="#3F6B4C" stroke="#1A3A24" stroke-width="2.5"/>'
+            '<path d="M50,30 C42,24 30,23 20,26 L20,72 C30,69 42,70 50,77 Z" fill="#FFFDF9"/>'
+            '<path d="M50,30 C58,24 70,23 80,26 L80,72 C70,69 58,70 50,77 Z" fill="#FFFDF9"/>'
+            '<line x1="50" y1="30" x2="50" y2="84" stroke="#1A3A24" stroke-width="2.5"/>'
+            '</svg>')
+
+def icon_crown(size=44):
+    return (_icon_open(size) +
+            '<path d="M18,72 L14,34 L32,48 L50,22 L68,48 L86,34 L82,72 Z" fill="#E8A93D" '
+            'stroke="#8A5A2B" stroke-width="2.5" stroke-linejoin="round"/>'
+            '<circle cx="14" cy="30" r="5" fill="#C94F6D" stroke="#8A5A2B" stroke-width="2"/>'
+            '<circle cx="50" cy="18" r="5" fill="#26A69A" stroke="#8A5A2B" stroke-width="2"/>'
+            '<circle cx="86" cy="30" r="5" fill="#C94F6D" stroke="#8A5A2B" stroke-width="2"/>'
+            '<rect x="18" y="72" width="64" height="10" rx="3" fill="#8A5A2B"/>'
+            '<circle cx="50" cy="56" r="6" fill="#C94F6D" stroke="#8A5A2B" stroke-width="2"/>'
+            '</svg>')
+
+ICON_01 = icon_palette()
+ICON_02 = icon_quill()
+ICON_03 = icon_pages()
+ICON_04 = icon_book()
+ICON_05 = icon_crown()
 
 HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -62,15 +156,17 @@ HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fusion Coloring</title>
 <style>
-  :root { --paper:#FFFFFF; --ink:#1A1916; --forest:#3F6B4C; --line:rgba(26,25,22,.12); }
+  :root { --paper:#F3EEE6; --ink:#1A1916; --forest:#3F6B4C; --line:rgba(26,25,22,.12); }
   * { box-sizing: border-box; }
   html { height:100%; }
   body { margin:0; background:var(--paper); color:var(--ink); font-family:Palatino,Georgia,serif; font-size:17px; line-height:1.55; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
-  header { flex:none; background:#fff; border-top:7px solid var(--forest); border-bottom:3px double var(--line); padding:1rem 1.2rem .85rem; text-align:center; }
+  header { flex:none; background:var(--paper); border-top:7px solid var(--forest); border-bottom:3px double var(--line); padding:1rem 1.2rem .85rem; text-align:center; }
   .masthead { display:flex; align-items:center; justify-content:center; gap:.9rem; }
   .brand { font-size:2rem; letter-spacing:.12em; font-weight:700; }
   .morn { color:var(--forest); font-size:1.3rem; }
   .mandala { flex:none; vertical-align:middle; }
+  .stepicon { flex:none; vertical-align:middle; }
+  details.step summary .stepicon { align-self:center; }
   h2.sub .mandala { margin-right:.45rem; }
   details.step summary .mandala { align-self:center; }
   .masthead .mandala { margin:0 .1rem; }
@@ -211,7 +307,7 @@ HTML = """<!DOCTYPE html>
 <div class="layout">
   <aside>
     <details class="step" open>
-      <summary>%%MANDALA_SM%%<span class="n">01</span> Create pages</summary>
+      <summary>%ICON_01%<span class="n">01</span> Create pages</summary>
       <div class="stepbody">
             <p>Paste your key once. Describe the plate. Press compose. The picture is tall, with your sentence and a page number under it.</p>
             <label for="key">API key</label>
@@ -263,7 +359,7 @@ HTML = """<!DOCTYPE html>
       </div>
     </details>
     <details class="step">
-      <summary>%%MANDALA_SM%%<span class="n">02</span> Story & front matter</summary>
+      <summary>%ICON_02%<span class="n">02</span> Story & front matter</summary>
       <div class="stepbody">
             <h2 class="sub">%%MANDALA_MED%%Story pages</h2>
             <p>Write the story that faces each coloring page — chapter by chapter, like a coloring-story book.</p>
@@ -289,7 +385,7 @@ HTML = """<!DOCTYPE html>
       </div>
     </details>
     <details class="step">
-      <summary>%%MANDALA_SM%%<span class="n">03</span> Arrange pages</summary>
+      <summary>%ICON_03%<span class="n">03</span> Arrange pages</summary>
       <div class="stepbody">
         <p>Put the book in order — art facing story, front matter first. Select a page on the canvas, then move or delete it here.</p>
             <button class="ghost" id="moveback" hidden>Move page earlier</button>
@@ -298,7 +394,7 @@ HTML = """<!DOCTYPE html>
       </div>
     </details>
     <details class="step">
-      <summary>%%MANDALA_SM%%<span class="n">04</span> Cover</summary>
+      <summary>%ICON_04%<span class="n">04</span> Cover</summary>
       <div class="stepbody">
         <p>Build the KDP full-wrap cover from your finished page count.</p>
 
@@ -389,7 +485,7 @@ HTML = """<!DOCTYPE html>
       </div>
     </details>
     <details class="step">
-      <summary>%%MANDALA_SM%%<span class="n">05</span> Publish</summary>
+      <summary>%ICON_05%<span class="n">05</span> Publish</summary>
       <div class="stepbody">
         <h2 class="sub">%%MANDALA_MED%%Book &amp; files</h2>
             <p class="count" id="count">0 pages</p>
@@ -452,7 +548,7 @@ HTML = """<!DOCTYPE html>
     <div class="workbar"><span class="wrule"></span>%%MANDALA_BAR%%<span class="wlabel">The Studio Canvas</span>%%MANDALA_BAR%%<span class="wrule"></span></div>
     <div class="stage">
     <div class="emptystate" id="emptystate">
-      %%MANDALA_BIG%%
+      <div class="es-orn">❦</div>
       <h2>Your canvas awaits</h2>
       <p>Describe a scene in <strong>01 · Create pages</strong>, then press <strong>Compose page</strong>.<br>Your artwork will appear here, ready for its finishing touches.</p>
     </div>
@@ -1840,12 +1936,15 @@ renderCount();
 </html>
 """
 
-# Stamp the mandala ornaments into the page (tokens placed above).
+# Stamp the mandala ornaments and step icons into the page (tokens placed above).
 HTML = HTML.replace("%%MANDALA_HEAD%%", MANDALA_HEAD)
-HTML = HTML.replace("%%MANDALA_SM%%", MANDALA_SM)
 HTML = HTML.replace("%%MANDALA_MED%%", MANDALA_MED)
 HTML = HTML.replace("%%MANDALA_BAR%%", MANDALA_BAR)
-HTML = HTML.replace("%%MANDALA_BIG%%", MANDALA_BIG)
+HTML = HTML.replace("%ICON_01%", ICON_01)
+HTML = HTML.replace("%ICON_02%", ICON_02)
+HTML = HTML.replace("%ICON_03%", ICON_03)
+HTML = HTML.replace("%ICON_04%", ICON_04)
+HTML = HTML.replace("%ICON_05%", ICON_05)
 
 def paeth(a, b, c):
     p = a + b - c
