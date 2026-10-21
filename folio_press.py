@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Folio Press local compose. Run: python3 folio_press.py"""
-import json, base64, struct, zlib, time, unicodedata, urllib.request
+"""Fusion Coloring local compose. Run: python3 folio_press.py"""
+import json, base64, struct, zlib, time, unicodedata, urllib.request, os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 
@@ -16,24 +16,54 @@ HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Folio Press</title>
+<title>Fusion Coloring</title>
 <style>
-  :root { --paper:#F3EEE6; --ink:#1A1916; --forest:#3F6B4C; --line:rgba(26,25,22,.12); }
+  :root { --paper:#FFFFFF; --ink:#1A1916; --forest:#3F6B4C; --line:rgba(26,25,22,.12); }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--paper); color:var(--ink); font-family:Palatino,Georgia,serif; }
-  header { padding:.9rem 1.2rem; border-bottom:1px solid var(--line); font-weight:600; }
-  .layout { display:grid; grid-template-columns:300px 1fr; min-height:calc(100vh - 52px); }
-  @media (max-width:800px) { .layout { grid-template-columns:1fr; } }
+  html { height:100%; }
+  body { margin:0; background:var(--paper); color:var(--ink); font-family:Palatino,Georgia,serif; font-size:17px; line-height:1.55; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+  header { flex:none; background:#fff; border-top:7px solid var(--forest); border-bottom:3px double var(--line); padding:1rem 1.2rem .85rem; text-align:center; }
+  .masthead { display:flex; align-items:center; justify-content:center; gap:.9rem; }
+  .brand { font-size:2rem; letter-spacing:.12em; font-weight:700; }
+  .morn { color:var(--forest); font-size:1.3rem; }
+  .tagline { font-style:italic; opacity:.6; font-size:.95rem; margin-top:.15rem; letter-spacing:.04em; }
+  details.step { border-bottom:1px solid var(--line); padding:.2rem 0 .9rem; margin-bottom:.5rem; }
+  details.step summary { cursor:pointer; font-size:1.3rem; font-weight:700; list-style:none; display:flex; align-items:baseline; gap:.6rem; padding:.35rem 0; }
+  details.step summary::-webkit-details-marker { display:none; }
+  details.step summary .n { font-size:.75rem; font-weight:700; color:var(--forest); letter-spacing:.06em; }
+  details.step summary::after { content:'▸'; margin-left:auto; opacity:.45; font-size:.9rem; }
+  details.step[open] summary::after { content:'▾'; }
+  .stepbody { padding-top:.2rem; }
+  h2.sub { font-size:1.05rem; margin:1.2rem 0 .4rem; }
+  .layout { flex:1; min-height:0; display:grid; grid-template-columns:405px 1fr; }
+  aside { overflow-y:auto; min-height:0; }
+  .canvas { overflow-y:auto; min-height:0; }
+  @media (max-width:800px) {
+    body { display:block; height:auto; overflow:auto; }
+    .layout { grid-template-columns:1fr; }
+    aside, .canvas { overflow:visible; }
+  }
   aside { padding:1.4rem 1.2rem; border-right:1px solid var(--line); }
   h1 { font-size:1.5rem; margin:0 0 .4rem; }
   p { margin:0 0 .8rem; }
-  label { display:block; font-size:.75rem; letter-spacing:.04em; text-transform:uppercase; margin:.6rem 0 .3rem; }
-  input, textarea, select { width:100%; border:1px solid var(--line); background:#fffdf9; border-radius:8px; padding:.65rem; font:inherit; }
+  label { display:block; font-size:.82rem; font-weight:600; letter-spacing:.05em; text-transform:uppercase; margin:.7rem 0 .35rem; }
+  input, textarea, select { width:100%; border:1px solid var(--line); background:#fffdf9; border-radius:8px; padding:.8rem; font:inherit; }
+  input:focus, textarea:focus, select:focus { outline:2px solid var(--forest); outline-offset:1px; border-color:var(--forest); }
   button { width:100%; margin-top:.55rem; background:var(--forest); color:var(--paper); border:none; border-radius:999px; padding:.75rem; font:inherit; cursor:pointer; }
   button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
   button:disabled { opacity:.6; }
   .count, .status { font-size:.85rem; color:var(--forest); margin:.55rem 0 0; }
-  .canvas { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:1.5rem; gap:1rem; }
+  .canvas { display:flex; flex-direction:column; align-items:stretch; padding:0 1.5rem 1.5rem;
+    background-image:radial-gradient(rgba(63,107,76,.08) 1.2px, transparent 1.2px); background-size:24px 24px; }
+  .workbar { display:flex; align-items:center; gap:.8rem; padding:.75rem .2rem; color:var(--forest); }
+  .wrule { flex:1; border-top:1px solid var(--line); }
+  .worn { font-size:.95rem; }
+  .wlabel { font-size:.78rem; letter-spacing:.2em; text-transform:uppercase; opacity:.8; white-space:nowrap; }
+  .stage { flex:1 0 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1rem; }
+  .emptystate { text-align:center; max-width:480px; border:2px dashed var(--line); border-radius:8px; padding:3rem 2.6rem; background:#fff; box-shadow:0 8px 24px rgba(26,25,22,.06); }
+  .emptystate .es-orn { color:var(--forest); font-size:1.7rem; }
+  .emptystate h2 { margin:.5rem 0 .7rem; font-size:1.45rem; }
+  .emptystate p { margin:0; opacity:.78; }
   .sheet { width:min(100%,440px); background:#fff; border:1px solid var(--line); box-shadow:0 8px 24px rgba(26,25,22,.08); padding:1rem 1rem .7rem; }
   .sheet img { width:100%; aspect-ratio:2/3; object-fit:contain; display:block; background:#fff; }
   .caption { margin-top:.55rem; font-size:.85rem; text-align:center; line-height:1.35; }
@@ -83,7 +113,7 @@ HTML = """<!DOCTYPE html>
   .strscroll { max-height:44vh; overflow:auto; border:1px solid var(--line); border-radius:6px; background:#fff; }
   .strscroll canvas { width:100%; display:block; }
   .strscroll.full canvas { width:auto; max-width:none; }
-  .charchk label { display:flex; gap:.5rem; align-items:center; margin:0 0 .35rem; text-transform:none; letter-spacing:0; font-size:.85rem; cursor:pointer; }
+  .charchk label { display:flex; gap:.5rem; align-items:center; margin:0 0 .4rem; text-transform:none; letter-spacing:0; font-size:.92rem; cursor:pointer; }
   .charchk input { width:auto; margin:0; }
   .charcard { display:flex; gap:.6rem; align-items:center; border:1px solid var(--line); border-radius:8px; padding:.5rem; margin-bottom:.5rem; background:#fff; }
   .charcard img { width:44px; height:66px; object-fit:cover; border-radius:4px; flex:none; }
@@ -99,6 +129,18 @@ HTML = """<!DOCTYPE html>
   .qdot.failed { background:#a33f3f; }
   .qdot.skipped { background:transparent; border:1px solid #c9c2b4; }
   @keyframes qpulse { from { opacity:.35; } to { opacity:1; } }
+  .kwrow { display:flex; gap:.4rem; align-items:center; margin-bottom:.35rem; }
+  .kwrow input { margin:0; }
+  .kwrow span { font-size:.7rem; opacity:.7; flex:none; width:3.4rem; text-align:right; }
+  .kwrow span.over { color:#a33f3f; font-weight:700; opacity:1; }
+  .kcheck { list-style:none; margin:.4rem 0 0; padding:0; }
+  .kcheck li { display:flex; gap:.5rem; align-items:baseline; padding:.25rem 0; }
+  .kcheck input { width:auto; margin:0; flex:none; transform:translateY(.1rem); }
+  .kcheck label { text-transform:none; letter-spacing:0; font-size:.92rem; margin:0; }
+  .kcheck li.auto label { opacity:.8; }
+  .kroyal { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.7rem .9rem; font-size:.9rem; line-height:1.6; }
+  .kroyal b { font-size:1.05rem; }
+  .kcount { font-size:.75rem; opacity:.7; text-transform:none; letter-spacing:0; }
   .editmodal { position:fixed; inset:0; background:rgba(26,25,22,.55); display:flex; align-items:center; justify-content:center; z-index:50; padding:1rem; }
   .editmodal[hidden] { display:none; }
   .editbox { background:var(--paper); border-radius:12px; padding:1.2rem 1.4rem; max-width:560px; width:100%; max-height:92vh; overflow:auto; }
@@ -112,125 +154,259 @@ HTML = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>Folio Press</header>
+<header>
+  <div class="masthead"><span class="morn">❦</span><span class="brand">Fusion Coloring</span><span class="morn">❦</span></div>
+  <div class="tagline">Your creative space</div>
+</header>
 <div class="layout">
   <aside>
-    <h1>Make a page</h1>
-    <p>Paste your key once. Describe the plate. Press compose. The picture is tall, with your sentence and a page number under it.</p>
-    <label for="key">API key</label>
-    <input id="key" type="password" autocomplete="off">
-    <label for="level">Complexity</label>
-    <select id="level">
-      <option value="easy">Easy — ages 5–12, open shapes</option>
-      <option value="medium" selected>Medium — teens, clear detail</option>
-      <option value="detailed">Detailed — adults, intricate line</option>
-    </select>
-    <label for="subject">What is on this page?</label>
-    <textarea id="subject" rows="4" placeholder="A princess and a falcon in a great hall"></textarea>
-    <label>Characters in this scene</label>
-    <div id="charchk" class="charchk"></div>
-    <button id="compose">Compose page</button>
-    <p class="count" id="count">0 pages</p>
-    <button class="ghost" id="pad" hidden>Add blank plates</button>
-    <label class="check" id="markswrap" hidden><input id="cmarks" type="checkbox" checked> Print captions &amp; page numbers</label>
-    <button class="ghost" id="download" hidden>Download interior PDF</button>
-    <button class="ghost" id="preflight" hidden>KDP preflight check</button>
-    <ul class="preflight" id="preflightlist"></ul>
-    <button class="ghost" id="savebook" hidden>Save book file</button>
-    <button class="ghost" id="loadbook">Load book file</button>
-    <input type="file" id="loadfile" accept="application/json,.json" hidden>
-    <button class="ghost" id="moveback" hidden>Move page earlier</button>
-    <button class="ghost" id="movefwd" hidden>Move page later</button>
-    <button class="ghost" id="delpage" hidden>Delete this page</button>
-    <p class="status" id="status"></p>
-    <h1>Characters</h1>
-    <p>Define Elinor, Bramble, and friends once — tick them for a scene and their look carries into every page.</p>
-    <div id="charlist"></div>
-    <label for="cname">Name</label>
-    <input id="cname" type="text" placeholder="Princess Elinor">
-    <label for="cdesc">Locked description</label>
-    <textarea id="cdesc" rows="3" placeholder="Young princess, long wavy auburn hair, green eyes, small gold circlet, medieval blue gown"></textarea>
-    <label for="crefs">Reference pictures (up to 3)</label>
-    <input type="file" id="crefs" accept="image/*" multiple>
-    <button id="cadd">Add character</button>
-    <p class="status" id="charstatus"></p>
-    <h1>Batch compose</h1>
-    <p>One scene per line. The batch uses the complexity above and your ticked characters, composing pages one at a time — walk away and come back.</p>
-    <textarea id="batchlist" rows="6" placeholder="Elinor and Bramble in the great hall&#10;Elinor practicing in the courtyard at dawn"></textarea>
-    <div class="editrow">
-      <button id="batchstart">Start batch</button>
-      <button class="ghost" id="batchstop" type="button" hidden>Stop after this one</button>
-    </div>
-    <ul class="batchq" id="batchq"></ul>
-    <p class="status" id="batchstatus"></p>
-    <h1>Cover</h1>
-    <p>Build the KDP full-wrap cover from your finished page count.</p>
-    <label for="ctitle">Book title</label>
-    <input id="ctitle" type="text" placeholder="Princess Elinor's Coloring Adventure">
-    <label for="csubtitle">Subtitle (optional)</label>
-    <input id="csubtitle" type="text" placeholder="">
-    <label for="cauthor">Author</label>
-    <input id="cauthor" type="text" placeholder="Christine">
-    <label for="cblurb">Back cover blurb</label>
-    <textarea id="cblurb" rows="4" placeholder="A few sentences about the book"></textarea>
-    <label for="cpages">Page count</label>
-    <div class="coverrow">
-      <input id="cpages" type="number" min="24" value="24">
-      <button class="ghost" id="csync" type="button">Use book</button>
-    </div>
-    <label for="cpaper">Paper</label>
-    <select id="cpaper">
-      <option value="white" selected>White paper</option>
-      <option value="cream">Cream paper</option>
-    </select>
-    <label for="ccolor">Cover color</label>
-    <select id="ccolor">
-      <option value="#3F6B4C" selected>Forest green</option>
-      <option value="#2C3E66">Navy</option>
-      <option value="#5B3A5E">Plum</option>
-      <option value="#7A2E2E">Maroon</option>
-      <option value="#1F6E6B">Teal</option>
-      <option value="#33302B">Charcoal</option>
-    </select>
-    <label class="check" for="cbarcode"><input id="cbarcode" type="checkbox" checked> Reserve barcode zone (no ISBN yet)</label>
-    <label for="cartprompt">Cover art prompt</label>
-    <textarea id="cartprompt" rows="3"></textarea>
-    <button id="cartgen">Generate cover art</button>
-    <button class="ghost" id="cartupload" type="button">Upload cover art</button>
-    <input type="file" id="cartfile" accept="image/*" hidden>
-    <div class="coverart"><img id="cartimg" alt="" hidden></div>
-    <div class="coverspec" id="coverspec"></div>
-    <div class="covermock" id="covermock" hidden>
-      <div class="cmp" id="cmback"><span>Back</span></div>
-      <div class="cmp" id="cmspine"><span>Spine</span></div>
-      <div class="cmp" id="cmfront"><span>Front</span></div>
-    </div>
-    <button id="cbuild">Build cover PDF</button>
-    <p class="status" id="cstatus"></p>
-    <h1>Story pages</h1>
-    <p>Write the story that faces each coloring page — chapter by chapter, like a coloring-story book.</p>
-    <label for="stitle">Chapter title</label>
-    <input id="stitle" type="text" placeholder="The Falconer's Glove">
-    <label for="sbody">Story text</label>
-    <textarea id="sbody" rows="6" placeholder="Write the story…"></textarea>
-    <label for="snote">History note (optional)</label>
-    <input id="snote" type="text" placeholder="A fascinating fact for the History Note">
-    <button id="sadd">Add story page</button>
-    <button class="ghost" id="scancel" hidden>Cancel editing</button>
-    <label for="sorn">Ornament (optional)</label>
-    <input type="file" id="sorn" accept="image/*">
-    <div class="coverart"><img id="sornprev" alt="" hidden></div>
-    <button class="ghost" id="sornrm" hidden>Remove ornament</button>
-    <p class="status" id="sstatus"></p>
-    <h1>Front matter</h1>
-    <p>Standard opening pages. The title page uses your cover title and author where it fits.</p>
-    <button class="ghost" id="fmTitle" type="button">Add title page</button>
-    <button class="ghost" id="fmCopyright" type="button">Add copyright page</button>
-    <button class="ghost" id="fmWelcome" type="button">Add welcome page</button>
-    <button class="ghost" id="fmBelongs" type="button">Add “belongs to” page</button>
+    <details class="step" open>
+      <summary><span class="n">01</span> Create pages</summary>
+      <div class="stepbody">
+            <p>Paste your key once. Describe the plate. Press compose. The picture is tall, with your sentence and a page number under it.</p>
+            <label for="key">API key</label>
+            <input id="key" type="password" autocomplete="off">
+            <label for="level">Complexity</label>
+            <select id="level">
+              <option value="easy">Easy — ages 5–12, open shapes</option>
+              <option value="medium" selected>Medium — teens, clear detail</option>
+              <option value="detailed">Detailed — adults, intricate line</option>
+            </select>
+            <label for="subject">What is on this page?</label>
+            <textarea id="subject" rows="4" placeholder="A princess and a falcon in a great hall"></textarea>
+            <label>Characters in this scene</label>
+            <div id="charchk" class="charchk"></div>
+            <button id="compose">Compose page</button>
+            <p class="status" id="status"></p>
+            <h2 class="sub">Characters</h2>
+            <p>Define Elinor, Bramble, and friends once — tick them for a scene and their look carries into every page.</p>
+            <div id="charlist"></div>
+            <label for="cname">Name</label>
+            <input id="cname" type="text" placeholder="Princess Elinor">
+            <label for="cdesc">Locked description</label>
+            <textarea id="cdesc" rows="3" placeholder="Young princess, long wavy auburn hair, green eyes, small gold circlet, medieval blue gown"></textarea>
+            <label for="crefs">Reference pictures (up to 3)</label>
+            <input type="file" id="crefs" accept="image/*" multiple>
+            <button id="cadd">Add character</button>
+            <p class="status" id="charstatus"></p>
+            <h2 class="sub">Batch compose</h2>
+            <p>One scene per line. The batch uses the complexity above and your ticked characters, composing pages one at a time — walk away and come back.</p>
+            <textarea id="batchlist" rows="6" placeholder="Elinor and Bramble in the great hall&#10;Elinor practicing in the courtyard at dawn"></textarea>
+            <div class="editrow">
+              <button id="batchstart">Start batch</button>
+              <button class="ghost" id="batchstop" type="button" hidden>Stop after this one</button>
+            </div>
+            <ul class="batchq" id="batchq"></ul>
+            <p class="status" id="batchstatus"></p>
+            <h2 class="sub">Mazes</h2>
+            <p>Classic solvable mazes, drawn crisp for print. No AI, no cost — generate as many as you like.</p>
+            <label for="mazediff">Difficulty</label>
+            <select id="mazediff">
+              <option value="easy">Easy — 12 × 18</option>
+              <option value="medium" selected>Medium — 16 × 24</option>
+              <option value="hard">Hard — 22 × 33</option>
+            </select>
+            <label for="mazecount">How many</label>
+            <input id="mazecount" type="number" min="1" max="20" value="1">
+            <button id="mazego">Generate maze</button>
+            <p class="status" id="mazestatus"></p>
+      </div>
+    </details>
+    <details class="step">
+      <summary><span class="n">02</span> Story & front matter</summary>
+      <div class="stepbody">
+            <h2 class="sub">Story pages</h2>
+            <p>Write the story that faces each coloring page — chapter by chapter, like a coloring-story book.</p>
+            <label for="stitle">Chapter title</label>
+            <input id="stitle" type="text" placeholder="The Falconer's Glove">
+            <label for="sbody">Story text</label>
+            <textarea id="sbody" rows="6" placeholder="Write the story…"></textarea>
+            <label for="snote">History note (optional)</label>
+            <input id="snote" type="text" placeholder="A fascinating fact for the History Note">
+            <button id="sadd">Add story page</button>
+            <button class="ghost" id="scancel" hidden>Cancel editing</button>
+            <label for="sorn">Ornament (optional)</label>
+            <input type="file" id="sorn" accept="image/*">
+            <div class="coverart"><img id="sornprev" alt="" hidden></div>
+            <button class="ghost" id="sornrm" hidden>Remove ornament</button>
+            <p class="status" id="sstatus"></p>
+            <h2 class="sub">Front matter</h2>
+            <p>Standard opening pages. The title page uses your cover title and author where it fits.</p>
+            <button class="ghost" id="fmTitle" type="button">Add title page</button>
+            <button class="ghost" id="fmCopyright" type="button">Add copyright page</button>
+            <button class="ghost" id="fmWelcome" type="button">Add welcome page</button>
+            <button class="ghost" id="fmBelongs" type="button">Add “belongs to” page</button>
+      </div>
+    </details>
+    <details class="step">
+      <summary><span class="n">03</span> Arrange pages</summary>
+      <div class="stepbody">
+        <p>Put the book in order — art facing story, front matter first. Select a page on the canvas, then move or delete it here.</p>
+            <button class="ghost" id="moveback" hidden>Move page earlier</button>
+            <button class="ghost" id="movefwd" hidden>Move page later</button>
+            <button class="ghost" id="delpage" hidden>Delete this page</button>
+      </div>
+    </details>
+    <details class="step">
+      <summary><span class="n">04</span> Cover</summary>
+      <div class="stepbody">
+        <p>Build the KDP full-wrap cover from your finished page count.</p>
+
+        <label for="ctitle">Book title</label>
+
+        <input id="ctitle" type="text" placeholder="Princess Elinor's Coloring Adventure">
+
+        <label for="csubtitle">Subtitle (optional)</label>
+
+        <input id="csubtitle" type="text" placeholder="">
+
+        <label for="cauthor">Author</label>
+
+        <input id="cauthor" type="text" placeholder="Christine">
+
+        <label for="cblurb">Back cover blurb</label>
+
+        <textarea id="cblurb" rows="4" placeholder="A few sentences about the book"></textarea>
+
+        <label for="cpages">Page count</label>
+
+        <div class="coverrow">
+
+        <input id="cpages" type="number" min="24" value="24">
+
+        <button class="ghost" id="csync" type="button">Use book</button>
+
+        </div>
+
+        <label for="cpaper">Paper</label>
+
+        <select id="cpaper">
+
+        <option value="white" selected>White paper</option>
+
+        <option value="cream">Cream paper</option>
+
+        </select>
+
+        <label for="ccolor">Cover color</label>
+
+        <select id="ccolor">
+
+        <option value="#3F6B4C" selected>Forest green</option>
+
+        <option value="#2C3E66">Navy</option>
+
+        <option value="#5B3A5E">Plum</option>
+
+        <option value="#7A2E2E">Maroon</option>
+
+        <option value="#1F6E6B">Teal</option>
+
+        <option value="#33302B">Charcoal</option>
+
+        </select>
+
+        <label class="check" for="cbarcode"><input id="cbarcode" type="checkbox" checked>
+        Reserve barcode zone (no ISBN yet)</label>
+
+        <label for="cartprompt">Cover art prompt</label>
+
+        <textarea id="cartprompt" rows="3"></textarea>
+
+        <button id="cartgen">Generate cover art</button>
+
+        <button class="ghost" id="cartupload" type="button">Upload cover art</button>
+
+        <input type="file" id="cartfile" accept="image/*" hidden>
+
+        <div class="coverart"><img id="cartimg" alt="" hidden></div>
+
+        <div class="coverspec" id="coverspec"></div>
+
+        <div class="covermock" id="covermock" hidden>
+
+        <div class="cmp" id="cmback"><span>Back</span></div>
+
+        <div class="cmp" id="cmspine"><span>Spine</span></div>
+
+        <div class="cmp" id="cmfront"><span>Front</span></div>
+
+        </div>
+
+        <button id="cbuild">Build cover PDF</button>
+
+        <p class="status" id="cstatus"></p>
+      </div>
+    </details>
+    <details class="step">
+      <summary><span class="n">05</span> Publish</summary>
+      <div class="stepbody">
+        <h2 class="sub">Book &amp; files</h2>
+            <p class="count" id="count">0 pages</p>
+            <button class="ghost" id="pad" hidden>Add blank plates</button>
+            <label class="check" id="markswrap" hidden><input id="cmarks" type="checkbox" checked> Print captions &amp; page numbers</label>
+            <button class="ghost" id="download" hidden>Download interior PDF</button>
+            <button class="ghost" id="preflight" hidden>KDP preflight check</button>
+            <ul class="preflight" id="preflightlist"></ul>
+            <button class="ghost" id="savebook" hidden>Save book file</button>
+            <button class="ghost" id="loadbook">Load book file</button>
+            <input type="file" id="loadfile" accept="application/json,.json" hidden>
+            <h2 class="sub">KDP publishing</h2>
+            <p>Everything KDP asks for, in one place. Saved with your book file — copy it over when you publish.</p>
+            <label for="ktitle">Title</label>
+            <input id="ktitle" type="text">
+            <label for="ksub">Subtitle (optional)</label>
+            <input id="ksub" type="text">
+            <label for="kauthor">Author</label>
+            <input id="kauthor" type="text">
+            <label for="kimprint">Imprint (optional)</label>
+            <input id="kimprint" type="text" value="Fusion Spark Books">
+            <label for="kdesc">Description <span class="kcount" id="kdesccount"></span></label>
+            <textarea id="kdesc" rows="5" maxlength="4000" placeholder="What is this book? Who is it for?"></textarea>
+            <label>Keywords — 7 slots, 50 characters each</label>
+            <div id="kwrap"></div>
+            <p class="status">Tip: don't repeat words across slots; think like a searching parent ("fairy tale coloring book girls 4-8").</p>
+            <label>Categories — pick these in KDP's category browser</label>
+            <input list="kcatlist" id="kcat1" type="text" placeholder="e.g. Children's Coloring Books">
+            <input list="kcatlist" id="kcat2" type="text">
+            <input list="kcatlist" id="kcat3" type="text">
+            <datalist id="kcatlist">
+              <option value="Children's Books > Activities, Crafts & Games > Coloring Books"></option>
+              <option value="Children's Books > Activities, Crafts & Games > Activity Books"></option>
+              <option value="Children's Books > Fairy Tales, Folk Tales & Myths"></option>
+              <option value="Humor & Entertainment > Puzzles & Games > Mazes"></option>
+            </datalist>
+            <h1 style="font-size:1.1rem;margin-top:1.2rem">Royalty estimator</h1>
+            <label for="kprice">List price (USD)</label>
+            <input id="kprice" type="number" min="0" step="0.01" placeholder="12.99">
+            <div class="kroyal" id="kroyal">Enter a list price…</div>
+            <p class="status">US rates, black ink, 8.5 × 11, October 2026. Confirm in KDP's calculator before you publish — rates change.</p>
+            <h1 style="font-size:1.1rem;margin-top:1.2rem">AI disclosure</h1>
+            <p class="status">KDP asks whether AI tools were used. For this book the honest answer is yes — paste this into the disclosure box and adjust as needed:</p>
+            <div class="kroyal" id="kaitext">The coloring illustrations in this book were generated with AI image tools, then curated, edited, and arranged by the author. The story text was written by the author.</div>
+            <div class="editrow"><button class="ghost" id="kcopy" type="button" style="width:auto">Copy disclosure text</button></div>
+            <h1 style="font-size:1.1rem;margin-top:1.2rem">Go-live checklist</h1>
+            <ul class="kcheck" id="kcheck">
+              <li class="auto"><input type="checkbox" id="kc1" disabled><label for="kc1">Interior has at least 24 pages</label></li>
+              <li class="auto"><input type="checkbox" id="kc2" disabled><label for="kc2">Page count is even</label></li>
+              <li><input type="checkbox" id="kc3"><label for="kc3">Cover PDF built from the cover section</label></li>
+              <li><input type="checkbox" id="kc4"><label for="kc4">AI content disclosed in KDP</label></li>
+              <li class="auto"><input type="checkbox" id="kc5" disabled><label for="kc5">Description and at least one keyword entered</label></li>
+              <li><input type="checkbox" id="kc6"><label for="kc6">Physical proof copy ordered and approved</label></li>
+            </ul>
+            <p class="status" id="kstatus"></p>
+      </div>
+    </details>
   </aside>
   <main class="canvas">
-    <div class="sheet" id="sheet">
+    <div class="workbar"><span class="wrule"></span><span class="worn">❦</span><span class="wlabel">The Studio Canvas</span><span class="worn">❦</span><span class="wrule"></span></div>
+    <div class="stage">
+    <div class="emptystate" id="emptystate">
+      <div class="es-orn">❦</div>
+      <h2>Your canvas awaits</h2>
+      <p>Describe a scene in <strong>01 · Create pages</strong>, then press <strong>Compose page</strong>.<br>Your artwork will appear here, ready for its finishing touches.</p>
+    </div>
+    <div class="sheet" id="sheet" hidden>
       <img id="plate" alt="">
       <div class="caption" id="caption">Empty plate</div>
       <div class="folio" id="folio"></div>
@@ -242,6 +418,7 @@ HTML = """<!DOCTYPE html>
       <button class="ghost" id="strlines" hidden>Strengthen lines…</button>
     </div>
     <div class="thumbs" id="thumbs"></div>
+    </div>
   </main>
 </div>
 <div class="editmodal" id="editmodal" hidden>
@@ -328,6 +505,7 @@ function renderCount() {
     saveBookBtn.hidden = true;
     preflightBtn.hidden = true;
     marksWrap.hidden = true;
+    refreshKdp();
     return;
   }
   downloadBtn.hidden = false;
@@ -342,6 +520,7 @@ function renderCount() {
     padBtn.hidden = false;
     padBtn.textContent = 'Add ' + gap + ' blank plate' + (gap === 1 ? '' : 's');
   }
+  refreshKdp();
 }
 
 function show(i) {
@@ -356,6 +535,8 @@ function show(i) {
     b.classList.toggle('active', idx === i);
   });
   const has = !!page;
+  const empty = book.length === 0;
+  document.getElementById('emptystate').hidden = !empty;
   delPageBtn.hidden = !has;
   moveBackBtn.hidden = !(has && i > 0);
   moveFwdBtn.hidden = !(has && i < book.length - 1);
@@ -385,7 +566,7 @@ function show(i) {
       orn.className = 'orn';
       orn.textContent = '— ◆ —';
       sview.appendChild(orn);
-      (page.body || '').split('\n').forEach((para) => {
+      (page.body || '').split('\\n').forEach((para) => {
         if (para.trim()) add('p', '', para.trim());
       });
       if (page.note) {
@@ -407,7 +588,7 @@ function show(i) {
     ed.onclick = () => editStory(i);
     sview.appendChild(ed);
   } else {
-    sheet.hidden = false;
+    sheet.hidden = empty;
     sview.hidden = true;
     if (!page || !page.image) {
       img.removeAttribute('src');
@@ -581,7 +762,7 @@ document.getElementById('batchstart').onclick = async () => {
   const key = document.getElementById('key').value.trim();
   const level = document.getElementById('level').value;
   const st = document.getElementById('batchstatus');
-  const scenes = document.getElementById('batchlist').value.split('\n')
+  const scenes = document.getElementById('batchlist').value.split('\\n')
     .map((s) => s.trim()).filter(Boolean);
   if (batchRunning) return;
   if (!key) { st.textContent = 'API key is required.'; return; }
@@ -715,10 +896,10 @@ padBtn.onclick = () => {
 
 saveBookBtn.onclick = () => {
   const status = document.getElementById('status');
-  const blob = new Blob([JSON.stringify({ app: 'folio-press', version: 3, pages: book, ornament: storyOrnament, marks: marksOn(), characters: characters })], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ app: 'fusion-coloring', version: 3, pages: book, ornament: storyOrnament, marks: marksOn(), characters: characters, kdp: kdpSaveData() })], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'folio-press-book.json';
+  a.download = 'fusion-coloring-book.json';
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   status.textContent = 'Book file saved. Keep it somewhere safe — it holds every page.';
@@ -762,6 +943,7 @@ loadFile.onchange = () => {
       marksBox.checked = Array.isArray(data) || data.marks !== false;
       characters = (!Array.isArray(data) && Array.isArray(data.characters)) ? data.characters : [];
       renderCharacters();
+      kdpLoadData(!Array.isArray(data) ? data.kdp : null);
       clearStoryForm();
       renderCount();
       renderThumbs();
@@ -864,9 +1046,9 @@ downloadBtn.onclick = async () => {
     const pdata = await pre.json();
     renderPreflight(pdata);
     const fails = pdata.checks.filter((c) => c.status === 'fail');
-    if (fails.length && !confirm('KDP preflight found ' + fails.length + ' problem(s):\n' +
-        fails.map((f) => '• ' + f.label + (f.detail ? ' — ' + f.detail : '')).join('\n') +
-        '\n\nDownload the PDF anyway?')) {
+    if (fails.length && !confirm('KDP preflight found ' + fails.length + ' problem(s):\\n' +
+        fails.map((f) => '• ' + f.label + (f.detail ? ' — ' + f.detail : '')).join('\\n') +
+        '\\n\\nDownload the PDF anyway?')) {
       status.textContent = 'Download cancelled. Fix the failed items and try again.';
       downloadBtn.disabled = false;
       return;
@@ -886,7 +1068,7 @@ downloadBtn.onclick = async () => {
     const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'folio-press-interior.pdf';
+    a.download = 'fusion-coloring-interior.pdf';
     a.click();
     status.textContent = 'Interior PDF downloaded. Cover is a separate file.';
   } catch (e) {
@@ -969,7 +1151,7 @@ document.getElementById('fmTitle').onclick = () => addFront('titlepage', {
 document.getElementById('fmCopyright').onclick = () => {
   const author = document.getElementById('cauthor').value.trim() || 'the author';
   addFront('copyright', {
-    body: 'Copyright © ' + new Date().getFullYear() + ' ' + author + '.\nAll rights reserved.\n\nNo part of this book may be reproduced without permission.'
+    body: 'Copyright © ' + new Date().getFullYear() + ' ' + author + '.\\nAll rights reserved.\\n\\nNo part of this book may be reproduced without permission.'
   });
 };
 document.getElementById('fmWelcome').onclick = () => addFront('welcome', { title: 'Welcome', body: '' });
@@ -1246,6 +1428,207 @@ document.getElementById('strsave').onclick = () => {
     'Strengthened copy added as page ' + (strIndex + 2) + ' — the original is untouched.';
 };
 
+/* ---- Mazes ---- */
+// Bitmask walls: N=1 E=2 S=4 W=8 (1 = wall present). Entrance: north of (0,0) open. Exit: south of last cell open.
+function generateMaze(cols, rows) {
+  const N = 1, E = 2, S = 4, W = 8;
+  const BIT = [N, E, S, W], OPP = [S, W, N, E];
+  const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
+  const walls = new Uint8Array(cols * rows).fill(N | E | S | W);
+  const seen = new Uint8Array(cols * rows);
+  const stack = [0];
+  seen[0] = 1;
+  while (stack.length) {
+    const cur = stack[stack.length - 1];
+    const cx = cur % cols, cy = (cur / cols) | 0;
+    let found = -1, next = -1;
+    const order = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
+    for (const d of order) {
+      const nx = cx + DX[d], ny = cy + DY[d];
+      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+      const ni = ny * cols + nx;
+      if (!seen[ni]) { found = d; next = ni; break; }
+    }
+    if (found < 0) { stack.pop(); continue; }
+    walls[cur] &= ~BIT[found];
+    walls[next] &= ~OPP[found];
+    seen[next] = 1;
+    stack.push(next);
+  }
+  walls[0] &= ~N;
+  walls[cols * rows - 1] &= ~S;
+  return { walls: walls, cols: cols, rows: rows };
+}
+
+function drawMaze(maze, W, H) {
+  const cols = maze.cols, rows = maze.rows, walls = maze.walls;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  x.fillStyle = '#fff';
+  x.fillRect(0, 0, W, H);
+  const mTop = H * 0.05, mBot = H * 0.05, mSide = W * 0.04;
+  const mw = W - mSide * 2, mh = H - mTop - mBot;
+  const cw = mw / cols, ch = mh / rows;
+  x.strokeStyle = '#000';
+  x.lineWidth = Math.max(3, cw * 0.055);
+  x.lineCap = 'square';
+  x.beginPath();
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      const wv = walls[cy * cols + cx];
+      const x0 = mSide + cx * cw, y0 = mTop + cy * ch;
+      if (wv & 1) { x.moveTo(x0, y0); x.lineTo(x0 + cw, y0); }
+      if (wv & 4) { x.moveTo(x0, y0 + ch); x.lineTo(x0 + cw, y0 + ch); }
+      if (wv & 2) { x.moveTo(x0 + cw, y0); x.lineTo(x0 + cw, y0 + ch); }
+      if (wv & 8) { x.moveTo(x0, y0); x.lineTo(x0, y0 + ch); }
+    }
+  }
+  x.stroke();
+  x.fillStyle = '#000';
+  x.textAlign = 'center';
+  x.font = '700 ' + Math.round(H * 0.028) + 'px Georgia, serif';
+  x.fillText('START', mSide + cw / 2, mTop * 0.72);
+  x.fillText('FINISH', W - mSide - cw / 2, H - mBot * 0.28);
+  return c;
+}
+
+const MAZE_SIZES = { easy: [12, 18], medium: [16, 24], hard: [22, 33] };
+
+document.getElementById('mazego').onclick = () => {
+  const st = document.getElementById('mazestatus');
+  const diff = document.getElementById('mazediff').value;
+  const count = Math.max(1, Math.min(20, parseInt(document.getElementById('mazecount').value) || 1));
+  const size = MAZE_SIZES[diff] || MAZE_SIZES.medium;
+  const label = diff.charAt(0).toUpperCase() + diff.slice(1);
+  for (let i = 0; i < count; i++) {
+    const maze = generateMaze(size[0], size[1]);
+    const canvas = drawMaze(maze, 1024, 1536);
+    book.push({ kind: 'art', image: canvas.toDataURL('image/png').split(',')[1],
+      caption: 'Maze — ' + label });
+  }
+  renderCount();
+  renderThumbs();
+  show(book.length - 1);
+  st.textContent = count === 1 ? 'Maze added as page ' + book.length + '.'
+    : count + ' mazes added, ending at page ' + book.length + '.';
+};
+
+/* ---- KDP publishing ---- */
+// US, black ink, large trim (8.5x11), rates in force October 2026.
+// Royalty = rate * list - printing. Rate is 60% at $9.99+, 50% below.
+function kdpPrintCost(pages) {
+  if (!(pages >= 24)) return null;
+  if (pages <= 110) return 2.84;
+  return 1.00 + 0.017 * pages;
+}
+function kdpRoyalty(list, pages) {
+  const printing = kdpPrintCost(pages);
+  if (printing === null || !(list > 0)) return null;
+  const rate = list >= 9.99 ? 0.60 : 0.50;
+  return { rate: rate, printing: printing, royalty: rate * list - printing,
+    minList: printing / rate };
+}
+
+(function buildKeywordRows() {
+  const wrap = document.getElementById('kwrap');
+  for (let i = 0; i < 7; i++) {
+    const row = document.createElement('div');
+    row.className = 'kwrow';
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.placeholder = 'Keyword ' + (i + 1);
+    inp.addEventListener('input', refreshKdp);
+    const sp = document.createElement('span');
+    row.appendChild(inp);
+    row.appendChild(sp);
+    wrap.appendChild(row);
+  }
+})();
+
+function kdpField(id) { return document.getElementById(id).value.trim(); }
+
+function refreshKdp() {
+  const desc = document.getElementById('kdesc');
+  document.getElementById('kdesccount').textContent = desc.value.length + ' / 4000';
+  document.querySelectorAll('#kwrap .kwrow').forEach((row) => {
+    const inp = row.querySelector('input');
+    const sp = row.querySelector('span');
+    sp.textContent = inp.value.length + '/50';
+    sp.classList.toggle('over', inp.value.length > 50);
+  });
+  const pages = book.length;
+  const price = parseFloat(document.getElementById('kprice').value);
+  const box = document.getElementById('kroyal');
+  const printing = kdpPrintCost(pages);
+  if (printing === null) {
+    box.textContent = 'Add pages — printing cost needs at least 24.';
+  } else if (!(price > 0)) {
+    box.innerHTML = 'Printing cost: <b>$' + printing.toFixed(2) + '</b> (' + pages +
+      ' pages). Enter a list price above.';
+  } else {
+    const r = kdpRoyalty(price, pages);
+    box.innerHTML = 'Printing cost <b>$' + r.printing.toFixed(2) + '</b> · royalty rate <b>' +
+      Math.round(r.rate * 100) + '%</b><br>Royalty per copy: <b>$' + r.royalty.toFixed(2) +
+      '</b><br><span style="opacity:.75;font-size:.8rem">Minimum list price $' + r.minList.toFixed(2) +
+      ' · price at $9.99+ for the 60% tier, not $9.98.</span>';
+  }
+  document.getElementById('kc1').checked = pages >= 24;
+  document.getElementById('kc2').checked = pages > 0 && pages % 2 === 0;
+  const hasKw = Array.prototype.some.call(
+    document.querySelectorAll('#kwrap input'), (i) => i.value.trim().length > 0);
+  document.getElementById('kc5').checked = desc.value.trim().length > 0 && hasKw;
+}
+
+['kdesc', 'kprice'].forEach((id) => {
+  document.getElementById(id).addEventListener('input', refreshKdp);
+});
+
+document.getElementById('kcopy').onclick = () => {
+  const txt = document.getElementById('kaitext').textContent;
+  const done = () => { document.getElementById('kstatus').textContent = 'Copied.'; };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(done, () => {
+      document.getElementById('kstatus').textContent = 'Copy failed — select the text manually.';
+    });
+  } else {
+    document.getElementById('kstatus').textContent = 'Select the text above and copy it manually.';
+  }
+};
+
+function kdpSaveData() {
+  return {
+    title: kdpField('ktitle'), subtitle: kdpField('ksub'), author: kdpField('kauthor'),
+    imprint: kdpField('kimprint'), description: document.getElementById('kdesc').value,
+    keywords: Array.prototype.map.call(document.querySelectorAll('#kwrap input'), (i) => i.value),
+    categories: [kdpField('kcat1'), kdpField('kcat2'), kdpField('kcat3')],
+    price: document.getElementById('kprice').value,
+    checks: {
+      kc3: document.getElementById('kc3').checked,
+      kc4: document.getElementById('kc4').checked,
+      kc6: document.getElementById('kc6').checked
+    }
+  };
+}
+
+function kdpLoadData(d) {
+  if (!d) return;
+  const set = (id, v) => { document.getElementById(id).value = v || ''; };
+  set('ktitle', d.title); set('ksub', d.subtitle); set('kauthor', d.author);
+  set('kimprint', d.imprint || 'Fusion Spark Books');
+  set('kdesc', d.description);
+  const kws = d.keywords || [];
+  document.querySelectorAll('#kwrap input').forEach((inp, i) => { inp.value = kws[i] || ''; });
+  const cats = d.categories || [];
+  set('kcat1', cats[0]); set('kcat2', cats[1]); set('kcat3', cats[2]);
+  set('kprice', d.price);
+  const ch = d.checks || {};
+  document.getElementById('kc3').checked = !!ch.kc3;
+  document.getElementById('kc4').checked = !!ch.kc4;
+  document.getElementById('kc6').checked = !!ch.kc6;
+  refreshKdp();
+}
+
 /* ---- Cover builder ---- */
 const coverArt = { image: null, w: 0, h: 0 };
 
@@ -1273,7 +1656,7 @@ function updateCoverSpec() {
   } else {
     lines.push('No cover art yet — generate or upload one.');
   }
-  document.getElementById('coverspec').textContent = lines.join('\n');
+  document.getElementById('coverspec').textContent = lines.join('\\n');
   const mock = document.getElementById('covermock');
   mock.hidden = false;
   const unit = 100 / s.totalW;
@@ -1377,7 +1760,7 @@ document.getElementById('cbuild').onclick = async () => {
     const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'kdp-cover.pdf';
+    a.download = 'fusion-coloring-cover.pdf';
     a.click();
     st.textContent = 'Cover PDF downloaded. Upload it with your interior on KDP.';
   } catch (e) {
@@ -2276,7 +2659,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_response(200)
         self.send_header("Content-Type", "application/pdf")
-        self.send_header("Content-Disposition", "attachment; filename=folio-press-interior.pdf")
+        self.send_header("Content-Disposition", "attachment; filename=fusion-coloring-interior.pdf")
         self.send_header("Content-Length", str(len(pdf)))
         self.end_headers()
         self.wfile.write(pdf)
@@ -2329,7 +2712,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_response(200)
         self.send_header("Content-Type", "application/pdf")
-        self.send_header("Content-Disposition", "attachment; filename=kdp-cover.pdf")
+        self.send_header("Content-Disposition", "attachment; filename=fusion-coloring-cover.pdf")
         self.send_header("Content-Length", str(len(pdf)))
         self.end_headers()
         self.wfile.write(pdf)
@@ -2374,5 +2757,6 @@ class Press(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 if __name__ == "__main__":
-    print("Folio Press at http://127.0.0.1:8765")
-    Press(("127.0.0.1", 8765), Handler).serve_forever()
+    port = int(os.environ.get("PORT", 8765))
+    print("Fusion Coloring on port %d" % port)
+    Press(("0.0.0.0", port), Handler).serve_forever()
