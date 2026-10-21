@@ -11,6 +11,50 @@ except ImportError:
     _PILImage = None
     HAS_PIL = False
 
+# Decorative mandala ornaments (inline SVG, jewel tones). Drawn by the app
+# itself: no image files, no loading, no cost. Used only in the decorative
+# chrome (masthead, step markers, section headers, canvas bar, empty state) --
+# never inside text fields and never over artwork.
+_MANDALA_COLORS = ["#D9554A", "#D9A441", "#2A9D8F", "#7B4B94", "#3F6B4C"]
+
+def mandala_svg(size, petals=12):
+    import math
+    cols = _MANDALA_COLORS
+    parts = ['<svg class="mandala" width="%d" height="%d" viewBox="-100 -100 200 200" '
+             'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="mandala ornament">'
+             % (size, size)]
+    dots = []
+    for i in range(petals * 2):
+        a = math.radians(i * 360.0 / (petals * 2))
+        dots.append('<circle cx="%.1f" cy="%.1f" r="3.2" fill="%s" opacity="0.85"/>'
+                    % (92 * math.cos(a), 92 * math.sin(a), cols[i % len(cols)]))
+    parts.append("<g>" + "".join(dots) + "</g>")
+    for i in range(petals):
+        a = i * 360.0 / petals
+        parts.append('<g transform="rotate(%.1f)"><path d="M0,-78 C16,-56 16,-29 0,-14 '
+                     'C-16,-29 -16,-56 0,-78 Z" fill="%s" opacity="0.8"/></g>'
+                     % (a, cols[i % len(cols)]))
+    for i in range(petals):
+        a = i * 360.0 / petals + 360.0 / petals / 2
+        parts.append('<g transform="rotate(%.1f)"><path d="M0,-52 C13,-38 13,-21 0,-10 '
+                     'C-13,-21 -13,-38 0,-52 Z" fill="%s" opacity="0.9"/></g>'
+                     % (a, cols[(i + 2) % len(cols)]))
+    parts.append('<circle r="30" fill="none" stroke="#3F6B4C" stroke-width="2.5" opacity="0.7"/>')
+    parts.append('<circle r="24" fill="none" stroke="#D9A441" stroke-width="1.5" opacity="0.7" stroke-dasharray="4 3"/>')
+    for i in range(8):
+        parts.append('<g transform="rotate(%d)"><path d="M0,-22 C8,-16 8,-9 0,-5 '
+                     'C-8,-9 -8,-16 0,-22 Z" fill="%s" opacity="0.95"/></g>'
+                     % (i * 45, cols[(i + 1) % len(cols)]))
+    parts.append('<circle r="7" fill="#3F6B4C"/><circle r="3" fill="#FFFDF9"/>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+MANDALA_HEAD = mandala_svg(76)    # masthead flanks
+MANDALA_SM = mandala_svg(38)      # step markers
+MANDALA_MED = mandala_svg(52)     # section headers
+MANDALA_BAR = mandala_svg(34)     # canvas bar
+MANDALA_BIG = mandala_svg(190)    # empty state
+
 HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -26,6 +70,12 @@ HTML = """<!DOCTYPE html>
   .masthead { display:flex; align-items:center; justify-content:center; gap:.9rem; }
   .brand { font-size:2rem; letter-spacing:.12em; font-weight:700; }
   .morn { color:var(--forest); font-size:1.3rem; }
+  .mandala { flex:none; vertical-align:middle; }
+  h2.sub .mandala { margin-right:.45rem; }
+  details.step summary .mandala { align-self:center; }
+  .masthead .mandala { margin:0 .1rem; }
+  .workbar .mandala { margin:0 .1rem; }
+  .emptystate .mandala { margin-bottom:.4rem; }
   .tagline { font-style:italic; opacity:.6; font-size:.95rem; margin-top:.15rem; letter-spacing:.04em; }
   details.step { border-bottom:1px solid var(--line); padding:.2rem 0 .9rem; margin-bottom:.5rem; }
   details.step summary { cursor:pointer; font-size:1.3rem; font-weight:700; list-style:none; display:flex; align-items:baseline; gap:.6rem; padding:.35rem 0; }
@@ -155,13 +205,13 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <div class="masthead"><span class="morn">❦</span><span class="brand">Fusion Coloring</span><span class="morn">❦</span></div>
+  <div class="masthead">%%MANDALA_HEAD%%<span class="brand">Fusion Coloring</span>%%MANDALA_HEAD%%</div>
   <div class="tagline">Your creative space</div>
 </header>
 <div class="layout">
   <aside>
     <details class="step" open>
-      <summary><span class="n">01</span> Create pages</summary>
+      <summary>%%MANDALA_SM%%<span class="n">01</span> Create pages</summary>
       <div class="stepbody">
             <p>Paste your key once. Describe the plate. Press compose. The picture is tall, with your sentence and a page number under it.</p>
             <label for="key">API key</label>
@@ -178,7 +228,7 @@ HTML = """<!DOCTYPE html>
             <div id="charchk" class="charchk"></div>
             <button id="compose">Compose page</button>
             <p class="status" id="status"></p>
-            <h2 class="sub">Characters</h2>
+            <h2 class="sub">%%MANDALA_MED%%Characters</h2>
             <p>Define Elinor, Bramble, and friends once — tick them for a scene and their look carries into every page.</p>
             <div id="charlist"></div>
             <label for="cname">Name</label>
@@ -189,7 +239,7 @@ HTML = """<!DOCTYPE html>
             <input type="file" id="crefs" accept="image/*" multiple>
             <button id="cadd">Add character</button>
             <p class="status" id="charstatus"></p>
-            <h2 class="sub">Batch compose</h2>
+            <h2 class="sub">%%MANDALA_MED%%Batch compose</h2>
             <p>One scene per line. The batch uses the complexity above and your ticked characters, composing pages one at a time — walk away and come back.</p>
             <textarea id="batchlist" rows="6" placeholder="Elinor and Bramble in the great hall&#10;Elinor practicing in the courtyard at dawn"></textarea>
             <div class="editrow">
@@ -198,7 +248,7 @@ HTML = """<!DOCTYPE html>
             </div>
             <ul class="batchq" id="batchq"></ul>
             <p class="status" id="batchstatus"></p>
-            <h2 class="sub">Mazes</h2>
+            <h2 class="sub">%%MANDALA_MED%%Mazes</h2>
             <p>Classic solvable mazes, drawn crisp for print. No AI, no cost — generate as many as you like.</p>
             <label for="mazediff">Difficulty</label>
             <select id="mazediff">
@@ -213,9 +263,9 @@ HTML = """<!DOCTYPE html>
       </div>
     </details>
     <details class="step">
-      <summary><span class="n">02</span> Story & front matter</summary>
+      <summary>%%MANDALA_SM%%<span class="n">02</span> Story & front matter</summary>
       <div class="stepbody">
-            <h2 class="sub">Story pages</h2>
+            <h2 class="sub">%%MANDALA_MED%%Story pages</h2>
             <p>Write the story that faces each coloring page — chapter by chapter, like a coloring-story book.</p>
             <label for="stitle">Chapter title</label>
             <input id="stitle" type="text" placeholder="The Falconer's Glove">
@@ -230,7 +280,7 @@ HTML = """<!DOCTYPE html>
             <div class="coverart"><img id="sornprev" alt="" hidden></div>
             <button class="ghost" id="sornrm" hidden>Remove ornament</button>
             <p class="status" id="sstatus"></p>
-            <h2 class="sub">Front matter</h2>
+            <h2 class="sub">%%MANDALA_MED%%Front matter</h2>
             <p>Standard opening pages. The title page uses your cover title and author where it fits.</p>
             <button class="ghost" id="fmTitle" type="button">Add title page</button>
             <button class="ghost" id="fmCopyright" type="button">Add copyright page</button>
@@ -239,7 +289,7 @@ HTML = """<!DOCTYPE html>
       </div>
     </details>
     <details class="step">
-      <summary><span class="n">03</span> Arrange pages</summary>
+      <summary>%%MANDALA_SM%%<span class="n">03</span> Arrange pages</summary>
       <div class="stepbody">
         <p>Put the book in order — art facing story, front matter first. Select a page on the canvas, then move or delete it here.</p>
             <button class="ghost" id="moveback" hidden>Move page earlier</button>
@@ -248,7 +298,7 @@ HTML = """<!DOCTYPE html>
       </div>
     </details>
     <details class="step">
-      <summary><span class="n">04</span> Cover</summary>
+      <summary>%%MANDALA_SM%%<span class="n">04</span> Cover</summary>
       <div class="stepbody">
         <p>Build the KDP full-wrap cover from your finished page count.</p>
 
@@ -339,9 +389,9 @@ HTML = """<!DOCTYPE html>
       </div>
     </details>
     <details class="step">
-      <summary><span class="n">05</span> Publish</summary>
+      <summary>%%MANDALA_SM%%<span class="n">05</span> Publish</summary>
       <div class="stepbody">
-        <h2 class="sub">Book &amp; files</h2>
+        <h2 class="sub">%%MANDALA_MED%%Book &amp; files</h2>
             <p class="count" id="count">0 pages</p>
             <button class="ghost" id="pad" hidden>Add blank plates</button>
             <label class="check" id="markswrap" hidden><input id="cmarks" type="checkbox" checked> Print captions &amp; page numbers</label>
@@ -351,7 +401,7 @@ HTML = """<!DOCTYPE html>
             <button class="ghost" id="savebook" hidden>Save book file</button>
             <button class="ghost" id="loadbook">Load book file</button>
             <input type="file" id="loadfile" accept="application/json,.json" hidden>
-            <h2 class="sub">KDP publishing</h2>
+            <h2 class="sub">%%MANDALA_MED%%KDP publishing</h2>
             <p>Everything KDP asks for, in one place. Saved with your book file — copy it over when you publish.</p>
             <label for="ktitle">Title</label>
             <input id="ktitle" type="text">
@@ -399,10 +449,10 @@ HTML = """<!DOCTYPE html>
     </details>
   </aside>
   <main class="canvas">
-    <div class="workbar"><span class="wrule"></span><span class="worn">❦</span><span class="wlabel">The Studio Canvas</span><span class="worn">❦</span><span class="wrule"></span></div>
+    <div class="workbar"><span class="wrule"></span>%%MANDALA_BAR%%<span class="wlabel">The Studio Canvas</span>%%MANDALA_BAR%%<span class="wrule"></span></div>
     <div class="stage">
     <div class="emptystate" id="emptystate">
-      <div class="es-orn">❦</div>
+      %%MANDALA_BIG%%
       <h2>Your canvas awaits</h2>
       <p>Describe a scene in <strong>01 · Create pages</strong>, then press <strong>Compose page</strong>.<br>Your artwork will appear here, ready for its finishing touches.</p>
     </div>
@@ -1789,6 +1839,13 @@ renderCount();
 </body>
 </html>
 """
+
+# Stamp the mandala ornaments into the page (tokens placed above).
+HTML = HTML.replace("%%MANDALA_HEAD%%", MANDALA_HEAD)
+HTML = HTML.replace("%%MANDALA_SM%%", MANDALA_SM)
+HTML = HTML.replace("%%MANDALA_MED%%", MANDALA_MED)
+HTML = HTML.replace("%%MANDALA_BAR%%", MANDALA_BAR)
+HTML = HTML.replace("%%MANDALA_BIG%%", MANDALA_BIG)
 
 def paeth(a, b, c):
     p = a + b - c
