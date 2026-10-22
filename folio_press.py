@@ -284,6 +284,7 @@ HTML = """<!DOCTYPE html>
   .qdot.done { background:var(--ink); }
   .qdot.failed { background:#a33f3f; }
   .qdot.skipped { background:transparent; border:1px solid #c9c2b4; }
+  .qerr { font-size:.82rem; color:#a33f3f; margin-top:.25rem; }
   @keyframes qpulse { from { opacity:.35; } to { opacity:1; } }
   .kwrow { display:flex; gap:.4rem; align-items:center; margin-bottom:.35rem; }
   .kwrow input { margin:0; }
@@ -985,7 +986,12 @@ document.getElementById('batchstart').onclick = async () => {
       done++;
     } catch (e) {
       row.dot.className = 'qdot failed';
-      row.li.title = (e && e.name === 'AbortError') ? 'Timed out' : ((e && e.message) || 'Failed');
+      const msg = (e && e.name === 'AbortError') ? 'Timed out' : ((e && e.message) || 'Failed');
+      row.li.title = msg;
+      const err = document.createElement('div');
+      err.className = 'qerr';
+      err.textContent = 'Failed: ' + msg;
+      row.li.appendChild(err);
       failed++;
     } finally {
       clearTimeout(timer);
@@ -2762,7 +2768,7 @@ def generate_with_references(key, prompt, ref_images):
     boundary = _edits_boundary()
     req_body = _edits_fields(boundary, prompt)
     for i, ref in enumerate(ref_images):
-        req_body += _mp_file(boundary, "image", "ref%d.png" % i, "image/png", ref)
+        req_body += _mp_file(boundary, "image[]", "ref%d.png" % i, "image/png", ref)
     req_body += _edits_end(boundary)
     return _post_images_edits(key, req_body, boundary)
 
