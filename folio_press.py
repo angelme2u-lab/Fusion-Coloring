@@ -2516,9 +2516,9 @@ def run_preflight(pages):
 
 
 def clean_to_lineart(b64):
-    """Very mild cleanup: only force the darkest pixels to black and the lightest
-    to white. Leaves mid-tones and anti-aliased edges alone so lines stay lighter
-    and Strengthen lines still has range to work with.
+    """Minimal cleanup for coloring pages: only force near-white background to pure
+    white. Leaves all line pixels (including mid-gray edges) untouched so the
+    model’s natural lighter line weight is preserved.
     """
     if not HAS_PIL or not b64:
         return b64
@@ -2526,8 +2526,8 @@ def clean_to_lineart(b64):
         from io import BytesIO
         data = base64.b64decode(b64)
         img = _PILImage.open(BytesIO(data)).convert("L")
-        # Only the darkest cores become pure black; only near-white becomes pure white
-        img = img.point(lambda p: 0 if p < 45 else (255 if p > 220 else p))
+        # Only clean the background; do not darken or force any lines to pure black
+        img = img.point(lambda p: 255 if p > 235 else p)
         out = BytesIO()
         img.save(out, format="PNG", optimize=True)
         return base64.b64encode(out.getvalue()).decode()
@@ -2895,9 +2895,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         level = (body.get("level") or "medium").strip()
         styles = {
-            "easy": "Very simple children's coloring-book page, portrait orientation. Thick, bold, even black ink outlines only. Large open shapes a young child can color. Minimal background — plain sky, simple castle silhouette, few details. Friendly clear characters with almost no pattern on clothing. One simple scene. Absolutely no color, no gray, no shading, no fine lines, no text. Solid white background. ",
-            "medium": "Teen coloring-book page, portrait orientation. Clean medium-weight black ink outlines. Moderate detail: recognizable architecture, some clothing pattern, a few background elements (bridge, boats, trees). Open areas left between lines for coloring. One clear scene. Absolutely no color, no gray fills, no shading, no text. Solid white background. ",
-            "detailed": "Highly intricate adult coloring-book page, portrait orientation. Fine delicate black ink linework throughout. Dense but organized detail: elaborate floral and geometric patterns on the gown, richly textured falcon feathers, many small architectural elements, foliage, clouds, and decorative flourishes in the background. Every region still colorable with white space between the fine lines. One scene. Absolutely no color, no gray fills, no shading, no text. Solid white background. Professional intricate coloring illustration. ",
+            "easy": "Very simple children's coloring-book page, portrait orientation. Light-to-medium weight black ink outlines (not heavy or poster-thick). Large open shapes a young child can color. Minimal background — plain sky, simple castle silhouette, few details. Friendly clear characters with almost no pattern on clothing. One simple scene. Absolutely no color, no gray fills, no shading, no text. Solid white background. ",
+            "medium": "Teen coloring-book page, portrait orientation. Clean light-to-medium weight black ink outlines, fine enough to color inside without the lines dominating. Moderate detail: recognizable architecture, some clothing pattern, a few background elements. Open areas left between lines. One clear scene. Absolutely no color, no gray fills, no shading, no text. Solid white background. ",
+            "detailed": "Intricate adult coloring-book page, portrait orientation. Fine, delicate black ink linework (not heavy or thick). Dense but organized detail with white space between lines so the page remains colorable and the lines do not overwhelm the scene. Elaborate patterns, textured feathers, architectural and foliage detail. One scene. Absolutely no color, no gray fills, no shading, no text. Solid white background. ",
         }
         prompt = styles.get(level, styles["medium"]) + subject
         chars = body.get("characters") or []
