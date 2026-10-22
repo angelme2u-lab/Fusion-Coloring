@@ -2534,7 +2534,7 @@ def clean_to_lineart(b64):
     except Exception:
         return b64
 
-def generate_image(key, prompt):
+def generate_image(key, prompt, model="gpt-image-2.5-flare"):
     """Call the images API. Returns (b64, None) or (None, error_message).
 
     Retries rate limits and connection hiccups; falls back from portrait
@@ -2546,7 +2546,7 @@ def generate_image(key, prompt):
             req = urllib.request.Request(
                 "https://api.openai.com/v1/images/generations",
                 data=json.dumps({
-                    "model": "gpt-image-2.5-flare",
+                    "model": model,
                     "prompt": prompt,
                     "n": 1,
                     "size": size,
@@ -2823,10 +2823,10 @@ def _edits_end(boundary):
     return b"--" + boundary + b"--\r\n"
 
 
-def _edits_fields(boundary, prompt):
+def _edits_fields(boundary, prompt, model="gpt-image-2.5-flare"):
     # Note: no response_format field — the gpt-image edits endpoint rejects it
     # and returns b64_json by default.
-    return (_mp_field(boundary, "model", "gpt-image-2.5-flare") +
+    return (_mp_field(boundary, "model", model) +
             _mp_field(boundary, "prompt", prompt) +
             _mp_field(boundary, "n", "1") +
             _mp_field(boundary, "quality", "high"))
@@ -2845,14 +2845,14 @@ def edit_image(key, prompt, image_bytes, mask_bytes):
     return _post_images_edits(key, req_body, boundary)
 
 
-def generate_with_references(key, prompt, ref_images):
+def generate_with_references(key, prompt, ref_images, model="gpt-image-2.5-flare"):
     """Generate a new image guided by reference images (character consistency).
 
     Calls the edits endpoint with no mask: each reference is an `image` part.
     Returns (b64, None) or (None, error_message).
     """
     boundary = _edits_boundary()
-    req_body = _edits_fields(boundary, prompt)
+    req_body = _edits_fields(boundary, prompt, model)
     for i, ref in enumerate(ref_images):
         req_body += _mp_file(boundary, "image[]", "ref%d.png" % i, "image/png", ref)
     req_body += _edits_end(boundary)
@@ -2921,10 +2921,11 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self._json(400, {"error": "Could not read a character reference image."})
             return
+        model = "gpt-image-2.5-sunburst" if level == "detailed" else "gpt-image-2.5-flare"
         if ref_images:
-            image, err = generate_with_references(key, prompt, ref_images)
+            image, err = generate_with_references(key, prompt, ref_images, model)
         else:
-            image, err = generate_image(key, prompt)
+            image, err = generate_image(key, prompt, model)
         if err:
             self._json(400, {"error": err})
             return
