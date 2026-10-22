@@ -1,1 +1,1 @@
-PLACEHOLDER_WILL_BE_REPLACED
+$(cat /tmp/folio_press_improved.py)
