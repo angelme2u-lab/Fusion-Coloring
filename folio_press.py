@@ -838,6 +838,41 @@ function renderThumbs() {
 
 /* ---- Characters ---- */
 let characters = [];
+const CHAR_STORE_KEY = 'fusion-coloring-characters';
+
+function saveCharacters() {
+  try {
+    localStorage.setItem(CHAR_STORE_KEY, JSON.stringify(characters));
+  } catch (e) { /* quota full — characters stay for this session */ }
+}
+
+function loadCharacters() {
+  try {
+    const raw = localStorage.getItem(CHAR_STORE_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) characters = arr;
+    }
+  } catch (e) { /* corrupted — start fresh */ }
+}
+
+function downscaleRef(dataUrl, cb) {
+  const img = new Image();
+  img.onload = () => {
+    const MAX = 512;
+    let w = img.naturalWidth, h = img.naturalHeight;
+    if (Math.max(w, h) > MAX) {
+      const s = MAX / Math.max(w, h);
+      w = Math.round(w * s); h = Math.round(h * s);
+    }
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    cb(c.toDataURL('image/png').split(',')[1]);
+  };
+  img.onerror = () => cb(dataUrl.split(',')[1]);
+  img.src = dataUrl;
+}
 
 function renderCharacters() {
   const list = document.getElementById('charlist');
@@ -866,6 +901,7 @@ function renderCharacters() {
     rm.textContent = 'Remove';
     rm.onclick = () => {
       characters = characters.filter((x) => x.id !== c.id);
+      saveCharacters();
       renderCharacters();
     };
     card.appendChild(rm);
@@ -903,10 +939,11 @@ document.getElementById('cadd').onclick = () => {
       id: 'c' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36),
       name: name, description: desc, refs: refs
     });
+    saveCharacters();
     document.getElementById('cname').value = '';
     document.getElementById('cdesc').value = '';
     document.getElementById('crefs').value = '';
-    st.textContent = name + ' added.';
+    st.textContent = name + ' added and saved for next time.';
     renderCharacters();
   };
   if (!files.length) { finishAdd([]); return; }
@@ -914,8 +951,10 @@ document.getElementById('cadd').onclick = () => {
   files.forEach((f) => {
     const r = new FileReader();
     r.onload = () => {
-      refs.push(r.result.split(',')[1]);
-      if (refs.length === files.length) finishAdd(refs);
+      downscaleRef(r.result, (small) => {
+        refs.push(small);
+        if (refs.length === files.length) finishAdd(refs);
+      });
     };
     r.readAsDataURL(f);
   });
@@ -1138,6 +1177,7 @@ loadFile.onchange = () => {
       }
       marksBox.checked = Array.isArray(data) || data.marks !== false;
       characters = (!Array.isArray(data) && Array.isArray(data.characters)) ? data.characters : [];
+      saveCharacters();
       renderCharacters();
       kdpLoadData(!Array.isArray(data) ? data.kdp : null);
       clearStoryForm();
@@ -2013,6 +2053,7 @@ fetch('/info').then((r) => r.json()).then((d) => {
 }).catch(() => {});
 updateCoverSpec();
 
+loadCharacters();
 renderCharacters();
 renderCount();
 </script>
