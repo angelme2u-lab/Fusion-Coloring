@@ -2740,10 +2740,11 @@ def _edits_end(boundary):
 
 
 def _edits_fields(boundary, prompt):
+    # Note: no response_format field — the gpt-image edits endpoint rejects it
+    # and returns b64_json by default.
     return (_mp_field(boundary, "model", "gpt-image-2.5-flare") +
             _mp_field(boundary, "prompt", prompt) +
-            _mp_field(boundary, "n", "1") +
-            _mp_field(boundary, "response_format", "b64_json"))
+            _mp_field(boundary, "n", "1"))
 
 
 def edit_image(key, prompt, image_bytes, mask_bytes):
