@@ -1579,40 +1579,47 @@ document.getElementById('editapply').onclick = async () => {
 
 /* ---- Strengthen lines ---- */
 function strengthenPixels(src, w, h, mode) {
-  // src: array-like of 0..255 luminance, length w*h. Returns Float32Array.
+  // Morphological line strengthening: dilate dark pixels by a controlled radius,
+  // then re-threshold. Does not just gamma-darken existing black.
   const params = {
-    subtle: { gamma: 3.0, dilate: 0 },
-    gentle: { gamma: 2.0, dilate: 0 },
-    balanced: { gamma: 1.6, dilate: 0.5 },
-    bolder: { gamma: 1.4, dilate: 1.0 }
-  }[mode] || { gamma: 3.0, dilate: 0 };
+    subtle:  { radius: 0, thresh: 140 },
+    gentle:  { radius: 1, thresh: 150 },
+    balanced:{ radius: 1, thresh: 130 },
+    bolder:  { radius: 2, thresh: 120 }
+  }[mode] || { radius: 1, thresh: 150 };
+
   const n = w * h;
-  const curved = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const v = src[i] / 255;
-    curved[i] = 255 * Math.pow(v, params.gamma);
+  // Binary mask of "line" pixels (dark enough)
+  const isLine = new Uint8Array(n);
+  for (let i = 0; i < n; i++) isLine[i] = src[i] < params.thresh ? 1 : 0;
+
+  if (params.radius === 0) {
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) out[i] = isLine[i] ? 0 : 255;
+    return out;
   }
-  if (params.dilate === 0) return curved;
-  const dil = new Float32Array(n);
+
+  // Dilate the line mask
+  const dilated = new Uint8Array(n);
+  const r = params.radius;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      let m = 255;
-      for (let dy = -1; dy <= 1; dy++) {
+      let hit = 0;
+      for (let dy = -r; dy <= r && !hit; dy++) {
         const yy = y + dy;
         if (yy < 0 || yy >= h) continue;
-        for (let dx = -1; dx <= 1; dx++) {
+        for (let dx = -r; dx <= r; dx++) {
           const xx = x + dx;
           if (xx < 0 || xx >= w) continue;
-          const v = curved[yy * w + xx];
-          if (v < m) m = v;
+          if (isLine[yy * w + xx]) { hit = 1; break; }
         }
       }
-      dil[y * w + x] = m;
+      dilated[y * w + x] = hit;
     }
   }
+
   const out = new Float32Array(n);
-  const s = params.dilate;
-  for (let i = 0; i < n; i++) out[i] = curved[i] * (1 - s) + Math.min(curved[i], dil[i]) * s;
+  for (let i = 0; i < n; i++) out[i] = dilated[i] ? 0 : 255;
   return out;
 }
 
@@ -2509,7 +2516,8 @@ def run_preflight(pages):
 
 
 def clean_to_lineart(b64):
-    """Force pure black lines on white background for printable coloring pages.
+    """Mild cleanup: push near-black toward black and near-white toward white,
+    but leave mid-gray edges so 'Strengthen lines' still has something to work with.
     Returns cleaned b64 or original if PIL unavailable.
     """
     if not HAS_PIL or not b64:
@@ -2518,8 +2526,8 @@ def clean_to_lineart(b64):
         from io import BytesIO
         data = base64.b64decode(b64)
         img = _PILImage.open(BytesIO(data)).convert("L")
-        # Aggressive threshold: dark lines stay black, everything else pure white
-        img = img.point(lambda p: 0 if p < 160 else 255)
+        # Soft threshold: only very dark becomes pure black, only very light becomes pure white
+        img = img.point(lambda p: 0 if p < 90 else (255 if p > 200 else p))
         out = BytesIO()
         img.save(out, format="PNG", optimize=True)
         return base64.b64encode(out.getvalue()).decode()
