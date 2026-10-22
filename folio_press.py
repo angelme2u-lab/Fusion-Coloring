@@ -586,6 +586,7 @@ HTML = """<!DOCTYPE html>
     <div class="imagerow">
       <button class="ghost" id="editart" hidden>Change only this…</button>
       <button class="ghost" id="strlines" hidden>Strengthen lines…</button>
+      <button class="ghost" id="dlimage" hidden>Download this image</button>
     </div>
     <div class="thumbs" id="thumbs"></div>
     </div>
@@ -614,9 +615,11 @@ HTML = """<!DOCTYPE html>
     <h2>Strengthen lines</h2>
     <p>Deepen gray lines or add a little weight along the edges. Nothing else changes.</p>
     <div class="strmodes">
+      <label><input type="radio" name="strmode" value="subtle" checked>
+        <span><b>Subtle · barely there</b><i>The lightest touch; only faintest grays deepen.</i></span></label>
       <label><input type="radio" name="strmode" value="gentle">
         <span><b>Darker only · gentle</b><i>Deepens gray lines; existing black lines keep their width.</i></span></label>
-      <label><input type="radio" name="strmode" value="balanced" checked>
+      <label><input type="radio" name="strmode" value="balanced">
         <span><b>Balanced · in between</b><i>A lighter edge adjustment between Darker only and Slightly bolder.</i></span></label>
       <label><input type="radio" name="strmode" value="bolder">
         <span><b>Slightly bolder</b><i>Also adds a little weight along existing edges. Fine details may thicken too.</i></span></label>
@@ -712,6 +715,7 @@ function show(i) {
   moveFwdBtn.hidden = !(has && i < book.length - 1);
   document.getElementById('editart').hidden = !(page && page.kind === 'art' && page.image);
   document.getElementById('strlines').hidden = !(page && page.kind === 'art' && page.image);
+  document.getElementById('dlimage').hidden = !(page && page.kind === 'art' && page.image);
   if (page && page.kind === 'story') {
     sheet.hidden = true;
     sview.hidden = false;
@@ -1537,10 +1541,11 @@ document.getElementById('editapply').onclick = async () => {
 function strengthenPixels(src, w, h, mode) {
   // src: array-like of 0..255 luminance, length w*h. Returns Float32Array.
   const params = {
+    subtle: { gamma: 3.0, dilate: 0 },
     gentle: { gamma: 2.0, dilate: 0 },
     balanced: { gamma: 1.6, dilate: 0.5 },
     bolder: { gamma: 1.4, dilate: 1.0 }
-  }[mode] || { gamma: 2.0, dilate: 0 };
+  }[mode] || { gamma: 3.0, dilate: 0 };
   const n = w * h;
   const curved = new Float32Array(n);
   for (let i = 0; i < n; i++) {
@@ -1604,7 +1609,7 @@ function openStrengthen(i) {
 
 function strMode() {
   const r = document.querySelector('input[name=strmode]:checked');
-  return r ? r.value : 'balanced';
+  return r ? r.value : 'subtle';
 }
 
 function runStrengthenPreview() {
@@ -1630,6 +1635,16 @@ document.getElementById('strinspect').onchange = (e) => {
 };
 document.getElementById('strcancel').onclick = () => { strModal.hidden = true; };
 document.getElementById('strlines').onclick = () => openStrengthen(current);
+document.getElementById('dlimage').onclick = () => {
+  const p = book[current];
+  if (!p || p.kind !== 'art' || !p.image) return;
+  const a = document.createElement('a');
+  a.href = 'data:image/png;base64,' + p.image;
+  a.download = 'fusion-coloring-page-' + (current + 1) + '.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+};
 document.getElementById('strsave').onclick = () => {
   const b64 = strPreview.toDataURL('image/png').split(',')[1];
   const p = book[strIndex];
@@ -2812,7 +2827,7 @@ class Handler(BaseHTTPRequestHandler):
         styles = {
             "easy": "A finished children's coloring-book page in portrait. Thick even black outlines, large open shapes a child can color, clear friendly characters, one simple scene. No gray, no shading, no color, no text, no letters, no border box, no watermark. White background. ",
             "medium": "A coloring-book page in portrait. Bold even black outlines that print clearly, moderate detail, open areas left between the lines so each shape can be colored, one scene. No gray, no shading, no color, no text, no border box. White background. ",
-            "detailed": "An adult coloring-book page in portrait. Confident black outlines, not hairline. Intricate costume, architecture, and pattern, but leave open regions between the lines so the page can be colored. One scene, even line weight. No gray fills, no shading, no color, no text, no border box, no watermark. White background. ",
+            "detailed": "A highly intricate adult coloring-book page in portrait, maximum detail. Fine delicate linework with elaborate patterns, ornate textures on fabric and surfaces, richly detailed background full of small elements, intricate borders and flourishes. Dense but organized — every region still colorable with open white space between the fine lines. One scene. No gray fills, no shading, no color, no text, no border box, no watermark. White background. ",
         }
         prompt = styles.get(level, styles["medium"]) + subject
         chars = body.get("characters") or []
