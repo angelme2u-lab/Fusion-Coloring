@@ -2516,9 +2516,8 @@ def run_preflight(pages):
 
 
 def clean_to_lineart(b64):
-    """Minimal cleanup for coloring pages: only force near-white background to pure
-    white. Leaves all line pixels (including mid-gray edges) untouched so the
-    model’s natural lighter line weight is preserved.
+    """Keep dark line cores, clear mid-gray fills to white so regions stay open
+    for coloring. Does not force lines darker.
     """
     if not HAS_PIL or not b64:
         return b64
@@ -2526,8 +2525,8 @@ def clean_to_lineart(b64):
         from io import BytesIO
         data = base64.b64decode(b64)
         img = _PILImage.open(BytesIO(data)).convert("L")
-        # Only clean the background; do not darken or force any lines to pure black
-        img = img.point(lambda p: 255 if p > 235 else p)
+        # Dark cores (< 80) stay as lines; mid-gray fills and light areas become white
+        img = img.point(lambda p: p if p < 80 else 255)
         out = BytesIO()
         img.save(out, format="PNG", optimize=True)
         return base64.b64encode(out.getvalue()).decode()
@@ -2895,9 +2894,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         level = (body.get("level") or "medium").strip()
         styles = {
-            "easy": "Very simple children's coloring-book page, portrait orientation. Light-to-medium weight black ink outlines (not heavy or poster-thick). Large open shapes a young child can color. Minimal background — plain sky, simple castle silhouette, few details. Friendly clear characters with almost no pattern on clothing. One simple scene. Absolutely no color, no gray fills, no shading, no text. Solid white background. ",
-            "medium": "Teen coloring-book page, portrait orientation. Clean light-to-medium weight black ink outlines, fine enough to color inside without the lines dominating. Moderate detail: recognizable architecture, some clothing pattern, a few background elements. Open areas left between lines. One clear scene. Absolutely no color, no gray fills, no shading, no text. Solid white background. ",
-            "detailed": "Intricate adult coloring-book page, portrait orientation. Fine, delicate black ink linework (not heavy or thick). Dense but organized detail with white space between lines so the page remains colorable and the lines do not overwhelm the scene. Elaborate patterns, textured feathers, architectural and foliage detail. One scene. Absolutely no color, no gray fills, no shading, no text. Solid white background. ",
+            "easy": "Very simple children's coloring-book page, portrait orientation. Light-to-medium weight black ink outlines only (not heavy). Large completely open white shapes a young child can color. Hair, clothing, and background are outline only — no filled areas, no gray, no shading inside any shape. Minimal background. Absolutely no color, no gray fills, no solid black areas except the lines themselves, no text. Solid white background. ",
+            "medium": "Teen coloring-book page, portrait orientation. Clean light-to-medium weight black ink outlines only. All areas inside shapes (hair, fabric, skin, sky, objects) must remain open white for coloring — outline only, no fills, no gray shading, no solid regions. Moderate detail with open white space between lines. Absolutely no color, no gray fills, no shading, no text. Solid white background. ",
+            "detailed": "Intricate adult coloring-book page, portrait orientation. Fine delicate black ink outlines only. Even dense areas (hair, feathers, patterns, foliage) must be open linework with white space inside every region so they can be colored — never filled or shaded. Dense but organized, with clear open areas between lines. Absolutely no color, no gray fills, no shading, no solid black except the lines, no text. Solid white background. ",
         }
         prompt = styles.get(level, styles["medium"]) + subject
         chars = body.get("characters") or []
