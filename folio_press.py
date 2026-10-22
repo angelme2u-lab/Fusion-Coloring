@@ -2516,9 +2516,9 @@ def run_preflight(pages):
 
 
 def clean_to_lineart(b64):
-    """Mild cleanup: push near-black toward black and near-white toward white,
-    but leave mid-gray edges so 'Strengthen lines' still has something to work with.
-    Returns cleaned b64 or original if PIL unavailable.
+    """Very mild cleanup: only force the darkest pixels to black and the lightest
+    to white. Leaves mid-tones and anti-aliased edges alone so lines stay lighter
+    and Strengthen lines still has range to work with.
     """
     if not HAS_PIL or not b64:
         return b64
@@ -2526,8 +2526,8 @@ def clean_to_lineart(b64):
         from io import BytesIO
         data = base64.b64decode(b64)
         img = _PILImage.open(BytesIO(data)).convert("L")
-        # Soft threshold: only very dark becomes pure black, only very light becomes pure white
-        img = img.point(lambda p: 0 if p < 90 else (255 if p > 200 else p))
+        # Only the darkest cores become pure black; only near-white becomes pure white
+        img = img.point(lambda p: 0 if p < 45 else (255 if p > 220 else p))
         out = BytesIO()
         img.save(out, format="PNG", optimize=True)
         return base64.b64encode(out.getvalue()).decode()
