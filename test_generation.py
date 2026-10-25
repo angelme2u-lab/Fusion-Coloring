@@ -66,6 +66,19 @@ class GenerationTests(unittest.TestCase):
             self.assertIn("Milo: tabby", result["generation"]["prompt"])
             self.assertEqual(result["generation"]["reference_count"], 2)
 
+    def test_teen_direction_overrides_simple_reference_and_scene_requests(self):
+        with patch.object(app, "generate_with_references", return_value=(self.original, None)) as generate:
+            status, result = self.compose(level="medium", style_reference=self.original,
+                                         subject="A realistic unicorn. Very simple children's scenery.")
+        self.assertEqual(status, 200)
+        prompt = generate.call_args.args[1]
+        self.assertIn("realistic anatomy", prompt)
+        self.assertIn("foreground, middle distance", prompt)
+        self.assertIn("never by thickening outlines", prompt)
+        self.assertTrue(prompt.endswith(app.COLORING_AUDIENCES["medium"]))
+        self.assertEqual(result["generation"]["prompt_version"], app.COLORING_PROMPT_VERSION)
+        self.assertEqual(result["generation"]["level"], "medium")
+
     def test_cleanup_retains_the_exact_original(self):
         with patch.object(app, "generate_image", return_value=(self.original, None)):
             status, result = self.compose(cleanup=True)
