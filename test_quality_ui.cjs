@@ -12,7 +12,7 @@ class Element {
   }
   set innerHTML(value) { this.children = []; }
   appendChild(child) { this.children.push(child); return child; }
-  addEventListener() {} removeAttribute() {} click() {} scrollIntoView() {}
+  addEventListener() {} removeAttribute() {} click() { this.clickCount = (this.clickCount || 0) + 1; } scrollIntoView() {}
   querySelector(tag) { return this.children.find(c => c.tag === tag); }
   getContext() { return {}; }
 }
@@ -63,6 +63,10 @@ run(script);
   assert.equal(get('generationdetails').hidden,false);
 
   get('savebook').onclick();
+  assert.equal(get('bookdownloadlink').hidden,false);
+  assert.equal(get('bookdownloadlink').clickCount,1);
+  assert.match(get('booksavestatus').textContent,/download requested/);
+  assert.doesNotMatch(get('booksavestatus').textContent,/Book file saved/);
   const saved=JSON.parse(await savedBlob.text());
   assert.equal(saved.version,4);
   assert.equal(saved.pages[0].generation.references.style.name,'approved.png');
@@ -97,5 +101,9 @@ run(script);
   assert.equal(run('book[1].body'),'Original story');
   assert.equal(get('generationdetails').hidden,true);
   assert.equal(run('styleReference'),null);
+  context.URL.createObjectURL=()=>{throw new Error('download unavailable')};
+  get('savebook').onclick();
+  assert.match(get('booksavestatus').textContent,/pages are still in this tab/);
+  assert.equal(run('book.length'),2, 'A failed download must not remove pages');
   console.log('PASS: single/batch generation, reference snapshots, key exclusion, save/load, settings reuse, and legacy books');
 })().catch(error=>{console.error(error);process.exitCode=1});
