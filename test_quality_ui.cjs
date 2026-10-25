@@ -20,6 +20,7 @@ const elements = new Map();
 const get = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
 const inputs = () => get('charchk').children.flatMap(l => l.children).filter(c => c.tag === 'input');
 const document = {
+  addEventListener(){},
   getElementById:get, createElement:tag=>new Element(tag), createTextNode:text=>({text}), body:new Element(),
   querySelectorAll:sel => sel === '#charchk input' ? inputs() : [],
   querySelector:sel => { const match = sel.match(/data-char="([^"]+)"/); return match ? inputs().find(c=>c.dataset.char === match[1]) : null; }
@@ -65,20 +66,31 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   assert.equal(get('generationprompt').value,'FULL PROMPT');
   assert.equal(get('generationdetails').hidden,false);
   assert.equal(get('quicksavebook').disabled,false);
+  assert.match(get('bookbackupstate').textContent,/no backup yet/);
 
   get('quicksavebook').onclick();
   assert.equal(get('bookdownloadlink').hidden,false);
   assert.equal(get('bookdownloadlink').clickCount,1);
   assert.equal(get('quickbookdownload').hidden,false);
+  assert.match(get('bookbackupstate').textContent,/Backup download requested at/);
   assert.match(get('booksavestatus').textContent,/download requested/);
   assert.doesNotMatch(get('booksavestatus').textContent,/Book file saved/);
   const saved=JSON.parse(await savedBlob.text());
   assert.equal(saved.version,4);
   assert.equal(saved.pages[0].generation.references.style.name,'approved.png');
   assert.equal(JSON.stringify(saved).includes('test-only-key'),false);
-  get('loadfile').files=[{text:JSON.stringify(saved)}];
+  get('loadfile').files=[{name:'My cats-2.json',text:JSON.stringify(saved)}];
   get('loadfile').onchange();
   assert.match(get('booktoolbarstatus').textContent,/Book loaded: 1 pages/);
+  assert.match(get('bookidentity').textContent,/My cats-2.json.*1 page/);
+  assert.match(get('bookbackupstate').textContent,/Reopened successfully.*No changes since reopening/);
+  assert.equal(get('quickbookdownload').hidden,true, 'Reopening must not leave a stale download link');
+  run('show(0)');
+  assert.match(get('bookbackupstate').textContent,/No changes since reopening/, 'Selecting a page is not an edit');
+  run("book[0].caption='Edited caption'; show(0)");
+  assert.match(get('bookbackupstate').textContent,/Changes since reopening/);
+  run("book[0].caption='Two cats in a kitchen'; show(0)");
+  assert.match(get('bookbackupstate').textContent,/No changes since reopening/, 'Reverting an edit returns to the checkpoint');
   assert.equal(run('book[0].original_image'),'raw-pixels');
   assert.equal(run('book[0].generation.prompt'),'FULL PROMPT');
 
