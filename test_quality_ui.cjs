@@ -44,6 +44,9 @@ const context = vm.createContext({document, Blob, FileReader:Reader, Image:FakeI
 const run = code => vm.runInContext(code, context);
 get('level').value='medium'; get('key').value='test-only-key';
 run(script);
+assert.equal(get('quicksavebook').disabled,true);
+get('quickloadbook').onclick();
+assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file picker directly');
 
 (async()=>{
   run(`styleReference={name:'approved.png',image:'style-pixels'};
@@ -61,10 +64,12 @@ run(script);
   assert.equal(run('book[0].original_image'),'raw-pixels');
   assert.equal(get('generationprompt').value,'FULL PROMPT');
   assert.equal(get('generationdetails').hidden,false);
+  assert.equal(get('quicksavebook').disabled,false);
 
-  get('savebook').onclick();
+  get('quicksavebook').onclick();
   assert.equal(get('bookdownloadlink').hidden,false);
   assert.equal(get('bookdownloadlink').clickCount,1);
+  assert.equal(get('quickbookdownload').hidden,false);
   assert.match(get('booksavestatus').textContent,/download requested/);
   assert.doesNotMatch(get('booksavestatus').textContent,/Book file saved/);
   const saved=JSON.parse(await savedBlob.text());
@@ -73,6 +78,7 @@ run(script);
   assert.equal(JSON.stringify(saved).includes('test-only-key'),false);
   get('loadfile').files=[{text:JSON.stringify(saved)}];
   get('loadfile').onchange();
+  assert.match(get('booktoolbarstatus').textContent,/Book loaded: 1 pages/);
   assert.equal(run('book[0].original_image'),'raw-pixels');
   assert.equal(run('book[0].generation.prompt'),'FULL PROMPT');
 
