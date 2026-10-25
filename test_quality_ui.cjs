@@ -112,6 +112,21 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   assert.equal(run('book[2].generation.references.style.image'),'style-pixels');
   assert.equal(requests.length,3);
 
+  const copy = run("strengthenedPage(book[0], 'stronger-pixels', 'gentle')");
+  context.strengthenedCopy=copy;
+  assert.equal(copy.generation.level,'medium', 'Line treatment preserves the generated audience');
+  assert.equal(copy.original_image,'raw-pixels');
+  assert.equal(copy.line_treatment.mode,'gentle');
+  run('book.push(strengthenedCopy); show(book.length - 1)');
+  assert.match(get('generationinfo').textContent,/Teens.*lines strengthened.*scene complexity unchanged/);
+  get('savebook').onclick();
+  const treatedBook=JSON.parse(await savedBlob.text());
+  get('loadfile').files=[{name:'treated.json',text:JSON.stringify(treatedBook)}];
+  get('loadfile').onchange();
+  assert.equal(run('book[book.length - 1].generation.level'),'medium');
+  assert.equal(run('book[book.length - 1].line_treatment.mode'),'gentle');
+  assert.equal(run('book[book.length - 1].image'),'stronger-pixels');
+
   get('loadfile').files=[{text:JSON.stringify({version:3,pages:[{kind:'art',image:'legacy',caption:'Original artwork'},{kind:'story',body:'Original story'}]})}];
   get('loadfile').onchange();
   assert.equal(run('book.length'),2);
