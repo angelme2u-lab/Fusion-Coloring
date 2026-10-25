@@ -311,6 +311,11 @@ HTML = """<!DOCTYPE html>
   .booktoolbar { display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap; margin-top:.5rem; }
   .booktoolbar button, .booktoolbar a { width:auto; margin:0; padding:.45rem 1rem; font-size:.9rem; }
   #booktoolbarstatus { max-width:760px; margin:.35rem auto 0; font-size:.8rem; line-height:1.3; }
+  .bookstate { max-width:760px; margin:.4rem auto 0; font-size:.85rem; line-height:1.35; }
+  .bookstate p { margin:.15rem 0; }
+  #bookidentity { font-weight:700; }
+  #bookbackupstate[data-state="ready"] { color:var(--forest); }
+  #bookbackupstate[data-state="changed"] { color:#8a4314; font-weight:700; }
 </style>
 </head>
 <body>
@@ -319,8 +324,12 @@ HTML = """<!DOCTYPE html>
   <div class="tagline">Your creative space</div>
   <div class="booktoolbar" role="group" aria-label="Save and open books">
     <button id="quickloadbook" type="button">Open saved book</button>
-    <button class="ghost" id="quicksavebook" type="button" disabled>Save book</button>
+    <button class="ghost" id="quicksavebook" type="button" disabled>Save book backup</button>
     <a id="quickbookdownload" download="fusion-coloring-book.json" hidden>Download book file</a>
+  </div>
+  <div class="bookstate" aria-label="Current book and backup status">
+    <p id="bookidentity">No book open</p>
+    <p id="bookbackupstate" role="status" aria-live="polite">Create pages or open a saved book to begin.</p>
   </div>
   <p class="status" id="booktoolbarstatus" role="status" aria-live="polite">Open a saved .json book here to restore its pictures and settings.</p>
 </header>
@@ -540,7 +549,7 @@ HTML = """<!DOCTYPE html>
             <button class="ghost" id="download" hidden>Download interior PDF</button>
             <button class="ghost" id="preflight" hidden>KDP preflight check</button>
             <ul class="preflight" id="preflightlist"></ul>
-            <button class="ghost" id="savebook" hidden>Save book file</button>
+            <button class="ghost" id="savebook" hidden>Save book backup (.json)</button>
             <p class="status" id="booksavestatus" role="status" aria-live="polite"></p>
             <a id="bookdownloadlink" download="fusion-coloring-book.json" hidden>Download book file</a>
             <button class="ghost" id="loadbook">Load book file</button>
@@ -681,6 +690,49 @@ const marksBox = document.getElementById('cmarks');
 let editingStory = -1;
 let storyOrnament = null;
 let styleReference = null;
+let openedBookFile = '';
+let openedBookAt = '';
+let backupRequestedAt = '';
+let bookCheckpoint = null;
+let checkpointKind = '';
+
+// Compare small field snapshots, keeping image strings by reference. Never
+// stringify all image data during navigation just to display save status.
+function captureBookCheckpoint() {
+  const fields = (item) => Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'w' && key !== 'h'));
+  return { pages: book.map(fields), characters: characters.map(fields),
+    style: styleReference, ornament: storyOrnament, marks: marksOn(), kdp: JSON.stringify(kdpSaveData()) };
+}
+
+function sameBookCheckpoint(a, b) {
+  if (!a || a.style !== b.style || a.ornament !== b.ornament || a.marks !== b.marks || a.kdp !== b.kdp) return false;
+  const sameItems = (x, y) => x.length === y.length && x.every((item, i) => {
+    const keys = Object.keys(item);
+    return keys.length === Object.keys(y[i]).length && keys.every((key) => item[key] === y[i][key]);
+  });
+  return sameItems(a.pages, b.pages) && sameItems(a.characters, b.characters);
+}
+
+function refreshBookState() {
+  const n = book.length;
+  const identity = document.getElementById('bookidentity');
+  const state = document.getElementById('bookbackupstate');
+  identity.textContent = (openedBookFile ? 'Book open: ' + openedBookFile : n ? 'New book' : 'No book open') +
+    ' · ' + n + (n === 1 ? ' page' : ' pages');
+  const changed = !sameBookCheckpoint(bookCheckpoint, captureBookCheckpoint());
+  if (changed || checkpointKind === 'opened') {
+    // A link prepared before later edits is an old snapshot, not a new backup.
+    document.getElementById('bookdownloadlink').hidden = true;
+    document.getElementById('quickbookdownload').hidden = true;
+  }
+  state.dataset.state = changed && n ? 'changed' : 'ready';
+  if (!n && !openedBookFile) state.textContent = 'Create pages or open a saved book to begin.';
+  else if (changed) state.textContent = checkpointKind
+    ? 'Changes since ' + (checkpointKind === 'opened' ? 'reopening' : 'the last backup request') + ' — download an updated backup.'
+    : 'This book has no backup yet — choose Save book backup.';
+  else if (checkpointKind === 'opened') state.textContent = 'Reopened successfully at ' + openedBookAt + ' · No changes since reopening.';
+  else state.textContent = 'Backup download requested at ' + backupRequestedAt + ' · Check Downloads to confirm the file was saved.';
+}
 
 function renderStyleReference() {
   const preview = document.getElementById('stylerefpreview');
@@ -691,6 +743,7 @@ function renderStyleReference() {
   document.getElementById('stylerefstatus').textContent = styleReference
     ? 'Style reference: ' + styleReference.name
     : 'Use an approved page to guide linework and illustration style.';
+  refreshBookState();
 }
 
 document.getElementById('styleref').onchange = async (e) => {
@@ -888,6 +941,7 @@ function show(i) {
     folio.textContent = (page && marksOn()) ? String(i + 1) : '';
   }
   updatePrintCheck(page, i);
+  refreshBookState();
 }
 
 // Print readiness, mirroring build_pdf's placement:
@@ -989,6 +1043,7 @@ function downscaleRef(dataUrl, cb, maxSize = 1024, onError = null) {
 }
 
 function renderCharacters() {
+  refreshBookState();
   const list = document.getElementById('charlist');
   list.innerHTML = '';
   characters.forEach((c) => {
@@ -1268,6 +1323,10 @@ saveBookBtn.onclick = () => {
     status.textContent = 'Book download requested. Check your browser downloads. If nothing starts, click Download book file below. Keep this tab open until the file is saved.';
     document.getElementById('booktoolbarstatus').textContent = 'Book download requested. Check Downloads, or use the Download book file link above.';
     link.click();
+    backupRequestedAt = new Date().toLocaleString();
+    bookCheckpoint = captureBookCheckpoint();
+    checkpointKind = 'requested';
+    refreshBookState();
   } catch (error) {
     status.textContent = 'Could not prepare the book download. Your pages are still in this tab. Keep it open and download each image while we resolve the problem.';
     document.getElementById('booktoolbarstatus').textContent = status.textContent;
@@ -1321,11 +1380,17 @@ loadFile.onchange = () => {
       renderCharacters();
       kdpLoadData(!Array.isArray(data) ? data.kdp : null);
       clearStoryForm();
+      openedBookFile = f.name || 'Saved book';
+      openedBookAt = new Date().toLocaleString();
+      backupRequestedAt = '';
+      checkpointKind = 'opened';
+      bookCheckpoint = captureBookCheckpoint();
       renderCount();
       renderThumbs();
       show(book.length - 1);
       status.textContent = 'Book loaded: ' + book.length + ' pages.';
       document.getElementById('booktoolbarstatus').textContent = status.textContent;
+      document.getElementById('quickloadbook').textContent = 'Open another saved book';
     } catch (e) {
       status.textContent = 'Could not read that book file.';
       document.getElementById('booktoolbarstatus').textContent = 'Could not open that file. Choose a Fusion Coloring .json book backup.';
@@ -1573,6 +1638,7 @@ document.getElementById('sorn').onchange = () => {
     const probe = new Image();
     probe.onload = () => {
       storyOrnament = { image: url.slice(url.indexOf(',') + 1), w: probe.naturalWidth, h: probe.naturalHeight };
+      refreshBookState();
       const pv = document.getElementById('sornprev');
       pv.src = url;
       pv.hidden = false;
@@ -1587,6 +1653,7 @@ document.getElementById('sorn').onchange = () => {
 
 document.getElementById('sornrm').onclick = () => {
   storyOrnament = null;
+  refreshBookState();
   document.getElementById('sornprev').hidden = true;
   document.getElementById('sornrm').hidden = true;
   document.getElementById('sstatus').textContent = 'Ornament removed.';
@@ -2001,7 +2068,16 @@ function refreshKdp() {
   const hasKw = Array.prototype.some.call(
     document.querySelectorAll('#kwrap input'), (i) => i.value.trim().length > 0);
   document.getElementById('kc5').checked = desc.value.trim().length > 0 && hasKw;
+  refreshBookState();
 }
+
+// Saved publishing fields, captions, characters and ornaments also affect backups.
+document.addEventListener('input', (event) => {
+  if ((event.target.closest && event.target.closest('#kwrap, #kcheck, #markswrap')) ||
+      ['ktitle', 'ksub', 'kauthor', 'kimprint', 'kdesc', 'kprice', 'kcat1', 'kcat2', 'kcat3'].includes(event.target.id)) {
+    refreshBookState();
+  }
+});
 
 ['kdesc', 'kprice'].forEach((id) => {
   document.getElementById(id).addEventListener('input', refreshKdp);
