@@ -308,12 +308,21 @@ HTML = """<!DOCTYPE html>
   .editrow label { margin:0; text-transform:none; letter-spacing:0; font-size:.85rem; display:flex; align-items:center; gap:.4rem; }
   .editrow input[type=range] { width:120px; }
   .editrow button { width:auto; margin-top:0; }
+  .booktoolbar { display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap; margin-top:.5rem; }
+  .booktoolbar button, .booktoolbar a { width:auto; margin:0; padding:.45rem 1rem; font-size:.9rem; }
+  #booktoolbarstatus { max-width:760px; margin:.35rem auto 0; font-size:.8rem; line-height:1.3; }
 </style>
 </head>
 <body>
 <header>
   <div class="masthead">%%MANDALA_HEAD%%<span class="brand">Fusion Coloring</span>%%MANDALA_HEAD%%</div>
   <div class="tagline">Your creative space</div>
+  <div class="booktoolbar" role="group" aria-label="Save and open books">
+    <button id="quickloadbook" type="button">Open saved book</button>
+    <button class="ghost" id="quicksavebook" type="button" disabled>Save book</button>
+    <a id="quickbookdownload" download="fusion-coloring-book.json" hidden>Download book file</a>
+  </div>
+  <p class="status" id="booktoolbarstatus" role="status" aria-live="polite">Open a saved .json book here to restore its pictures and settings.</p>
 </header>
 <div class="layout">
   <aside>
@@ -772,6 +781,7 @@ function nextMultipleOf4(n) {
 
 function renderCount() {
   const n = book.length;
+  document.getElementById('quicksavebook').disabled = n === 0;
   const target = nextMultipleOf4(n);
   const gap = target - n;
   if (n === 0) {
@@ -1251,20 +1261,28 @@ saveBookBtn.onclick = () => {
     bookDownloadUrl = nextUrl;
     link.href = nextUrl;
     link.hidden = false;
+    const quickLink = document.getElementById('quickbookdownload');
+    quickLink.href = nextUrl;
+    quickLink.hidden = false;
     if (previousUrl) URL.revokeObjectURL(previousUrl);
     status.textContent = 'Book download requested. Check your browser downloads. If nothing starts, click Download book file below. Keep this tab open until the file is saved.';
+    document.getElementById('booktoolbarstatus').textContent = 'Book download requested. Check Downloads, or use the Download book file link above.';
     link.click();
   } catch (error) {
     status.textContent = 'Could not prepare the book download. Your pages are still in this tab. Keep it open and download each image while we resolve the problem.';
+    document.getElementById('booktoolbarstatus').textContent = status.textContent;
   }
 };
 
 loadBookBtn.onclick = () => loadFile.click();
+document.getElementById('quickloadbook').onclick = () => loadFile.click();
+document.getElementById('quicksavebook').onclick = saveBookBtn.onclick;
 
 loadFile.onchange = () => {
   const status = document.getElementById('status');
   const f = loadFile.files[0];
   if (!f) return;
+  document.getElementById('booktoolbarstatus').textContent = 'Opening ' + f.name + '…';
   const reader = new FileReader();
   reader.onload = () => {
     try {
@@ -1307,9 +1325,15 @@ loadFile.onchange = () => {
       renderThumbs();
       show(book.length - 1);
       status.textContent = 'Book loaded: ' + book.length + ' pages.';
+      document.getElementById('booktoolbarstatus').textContent = status.textContent;
     } catch (e) {
       status.textContent = 'Could not read that book file.';
+      document.getElementById('booktoolbarstatus').textContent = 'Could not open that file. Choose a Fusion Coloring .json book backup.';
     }
+    loadFile.value = '';
+  };
+  reader.onerror = () => {
+    document.getElementById('booktoolbarstatus').textContent = 'Could not read the selected file. Your current pages are still open. Try choosing the backup again.';
     loadFile.value = '';
   };
   reader.readAsText(f);
