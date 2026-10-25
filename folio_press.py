@@ -347,9 +347,10 @@ HTML = """<!DOCTYPE html>
             <label for="level">Complexity</label>
             <select id="level">
               <option value="easy">Children — simple scenes, large shapes</option>
-              <option value="medium" selected>Medium — teens, clear detail</option>
+              <option value="medium" selected>Teens — realistic subjects, balanced scene detail</option>
               <option value="detailed">Adults — rich detail, clear coloring spaces</option>
             </select>
+            <p class="status">Audience changes detail throughout the scene. To change an existing picture’s complexity, compose a new page; strengthening lines only changes the linework.</p>
             <label for="styleref">Artwork style reference (optional)</label>
             <input type="file" id="styleref" accept="image/*">
             <p class="status" id="stylerefstatus">Use an approved page to guide linework and illustration style.</p>
@@ -367,7 +368,7 @@ HTML = """<!DOCTYPE html>
               <p class="status" id="generationinfo"></p>
               <textarea id="generationprompt" rows="6" readonly aria-label="Complete generation prompt"></textarea>
               <button class="ghost" id="reusesettings" type="button">Use these settings for another page</button>
-              <button class="ghost" id="downloadoriginal" type="button" hidden>Download original before cleanup</button>
+              <button class="ghost" id="downloadoriginal" type="button" hidden>Download original linework</button>
             </details>
             <h2 class="sub">%%MANDALA_MED%%Characters</h2>
             <p>Define Elinor, Bramble, and friends once — tick them for a scene and their look carries into every page.</p>
@@ -786,7 +787,9 @@ function renderGenerationDetails(page) {
   document.getElementById('downloadoriginal').hidden = !(page && page.original_image);
   document.getElementById('generationprompt').value = g ? g.prompt || '' : '';
   document.getElementById('generationinfo').textContent = g
-    ? g.model + ' · ' + g.level + ' · high quality · ' + (g.cleanup ? 'gray removal on' : 'original linework') : '';
+    ? ({easy:'Children',medium:'Teens',detailed:'Adults'}[g.level] || g.level) + ' · ' + g.model +
+      ' · high quality · ' + (g.cleanup ? 'gray removal on' : 'original linework') +
+      (page.line_treatment ? ' · lines strengthened (' + page.line_treatment.mode + '); scene complexity unchanged' : '') : '';
 }
 
 document.getElementById('reusesettings').onclick = () => {
@@ -1357,7 +1360,8 @@ loadFile.onchange = () => {
             publisher: p.publisher || '' });
         } else if (p.image) {
           book.push({ kind: 'art', image: p.image, caption: p.caption || '', w: p.w || 0, h: p.h || 0,
-            generation: p.generation || null, original_image: p.original_image || null });
+            generation: p.generation || null, original_image: p.original_image || null,
+            line_treatment: p.line_treatment || null });
         } else {
           book.push({ kind: 'blank' });
         }
@@ -1908,8 +1912,7 @@ document.getElementById('dlimage').onclick = () => {
 document.getElementById('strsave').onclick = () => {
   const b64 = strPreview.toDataURL('image/png').split(',')[1];
   const p = book[strIndex];
-  book.splice(strIndex + 1, 0, { kind: 'art', image: b64,
-    caption: p.caption ? p.caption + ' (lines strengthened)' : 'Lines strengthened' });
+  book.splice(strIndex + 1, 0, strengthenedPage(p, b64, strMode()));
   strModal.hidden = true;
   renderCount();
   renderThumbs();
@@ -1917,6 +1920,14 @@ document.getElementById('strsave').onclick = () => {
   document.getElementById('status').textContent =
     'Strengthened copy added as page ' + (strIndex + 2) + ' — the original is untouched.';
 };
+
+function strengthenedPage(source, image, mode) {
+  return { kind: 'art', image,
+    caption: source.caption ? source.caption + ' (lines strengthened)' : 'Lines strengthened',
+    generation: source.generation ? JSON.parse(JSON.stringify(source.generation)) : null,
+    original_image: source.original_image || source.image,
+    line_treatment: { mode, created_at: new Date().toISOString() } };
+}
 
 /* ---- Mazes ---- */
 // Bitmask walls: N=1 E=2 S=4 W=8 (1 = wall present). Entrance: north of (0,0) open. Exit: south of last cell open.
@@ -3054,7 +3065,7 @@ def _edits_fields(boundary, prompt, model="gpt-image-2.5-flare"):
             _mp_field(boundary, "quality", "high"))
 
 
-COLORING_PROMPT_VERSION = "2026-10-quality-1"
+COLORING_PROMPT_VERSION = "2026-10-quality-2"
 COLORING_STANDARD = (
     "Create one polished portrait black-and-white coloring-book illustration. "
     "Expressive appealing subjects, natural poses, distinct personality, and believable anatomy. "
@@ -3075,10 +3086,19 @@ COLORING_AUDIENCES = {
         "Use clear medium-to-bold outlines throughout, not just on the main subject. "
     ),
     "medium": (
-        "Audience: teens. Appealing expressive subjects and a coherent scene with moderate purposeful detail. "
-        "Clear medium-weight outlines, broad animal markings, a few decorative motifs and readable background objects. "
-        "Keep generous coloring spaces across subjects, plants, fabrics, borders, and background. "
-        "Avoid crowded textures and tiny repetitive patterns. "
+        "Audience: teens. Create a distinctly intermediate level of complexity across the ENTIRE scene. "
+        "Preserve realistic anatomy, natural proportions, elegant silhouettes and expressive faces; "
+        "do not turn realistic subjects into cartoon characters, enlarge their eyes, or give them baby proportions. "
+        "Develop the setting beyond a children's page: include a coherent foreground, middle distance and "
+        "simple distant background with several recognizable supporting elements from the requested scene. "
+        "Use individually outlined flowers with distinct petals, leaf groups, readable rocks and architecture, "
+        "and flowing hair or manes divided into a moderate number of broad locks. "
+        "Keep subject interiors spacious and alternate moderate decorative detail with open resting areas. "
+        "Compared with an adult page, reduce foliage density, repeated patterns, tiny divisions and surface texture; "
+        "retain more developed plants, objects and landscape than a children's page. "
+        "Use smooth confident medium-weight contours with clear object separation. "
+        "Create complexity through meaningful shapes and scene structure, never by thickening outlines, "
+        "adding hatching or copying a simplified children's composition unchanged. "
     ),
     "detailed": (
         "Audience: adults. Sophisticated inviting illustration with rich, balanced, purposeful detail. "
@@ -3112,6 +3132,9 @@ def coloring_prompt(subject, level, characters, has_style_reference=False):
     if char_lines:
         prompt += ("\nCharacter identities: preserve their recognizable features and clothing, "
                    "rendered as black outline art at the selected audience complexity.\n" + "\n".join(char_lines))
+    prompt += ("\nFinal audience direction: apply the selected audience's scene complexity throughout, "
+               "including when the requested scene or reference contains more or less detail. ")
+    prompt += COLORING_AUDIENCES[level]
     return prompt
 
 
