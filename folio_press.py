@@ -328,16 +328,29 @@ HTML = """<!DOCTYPE html>
             </div>
             <label for="level">Complexity</label>
             <select id="level">
-              <option value="easy">Easy — ages 5–12, open shapes</option>
+              <option value="easy">Children — simple scenes, large shapes</option>
               <option value="medium" selected>Medium — teens, clear detail</option>
-              <option value="detailed">Detailed — adults, intricate line</option>
+              <option value="detailed">Adults — rich detail, clear coloring spaces</option>
             </select>
+            <label for="styleref">Artwork style reference (optional)</label>
+            <input type="file" id="styleref" accept="image/*">
+            <p class="status" id="stylerefstatus">Use an approved page to guide linework and illustration style.</p>
+            <img id="stylerefpreview" alt="Artwork style reference" hidden style="max-width:120px;max-height:150px">
+            <button class="ghost" id="clearstyleref" type="button" hidden>Remove style reference</button>
+            <label class="check"><input type="checkbox" id="cleanup">Remove gray after generation (keeps the original too)</label>
             <label for="subject">What is on this page?</label>
             <textarea id="subject" rows="4" placeholder="A princess and a falcon in a great hall"></textarea>
             <label>Characters in this scene</label>
             <div id="charchk" class="charchk"></div>
             <button id="compose">Compose page</button>
             <p class="status" id="status"></p>
+            <details id="generationdetails" hidden>
+              <summary>Selected image settings</summary>
+              <p class="status" id="generationinfo"></p>
+              <textarea id="generationprompt" rows="6" readonly aria-label="Complete generation prompt"></textarea>
+              <button class="ghost" id="reusesettings" type="button">Use these settings for another page</button>
+              <button class="ghost" id="downloadoriginal" type="button" hidden>Download original before cleanup</button>
+            </details>
             <h2 class="sub">%%MANDALA_MED%%Characters</h2>
             <p>Define Elinor, Bramble, and friends once — tick them for a scene and their look carries into every page.</p>
             <div id="charlist"></div>
@@ -656,6 +669,94 @@ const marksWrap = document.getElementById('markswrap');
 const marksBox = document.getElementById('cmarks');
 let editingStory = -1;
 let storyOrnament = null;
+let styleReference = null;
+
+function renderStyleReference() {
+  const preview = document.getElementById('stylerefpreview');
+  preview.hidden = !styleReference;
+  if (styleReference) preview.src = 'data:image/png;base64,' + styleReference.image;
+  else preview.removeAttribute('src');
+  document.getElementById('clearstyleref').hidden = !styleReference;
+  document.getElementById('stylerefstatus').textContent = styleReference
+    ? 'Style reference: ' + styleReference.name
+    : 'Use an approved page to guide linework and illustration style.';
+}
+
+document.getElementById('styleref').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = () => downscaleRef(reader.result, resolve, 1536, reject);
+      reader.readAsDataURL(file);
+    });
+    styleReference = { name: file.name, image };
+    renderStyleReference();
+  } catch (err) {
+    document.getElementById('stylerefstatus').textContent = 'Could not open that reference. Choose a valid image.';
+  }
+  e.target.value = '';
+};
+document.getElementById('clearstyleref').onclick = () => {
+  styleReference = null;
+  renderStyleReference();
+};
+
+function captureGenerationReferences(chars) {
+  return { style: styleReference ? { ...styleReference } : null,
+    characters: chars.map((c) => ({ name: c.name, description: c.description || '', refs: [...(c.refs || [])] })) };
+}
+
+function generatedPage(data, subject, referenceSnapshot) {
+  const page = { kind: 'art', image: data.image, caption: subject };
+  if (data.original_image) page.original_image = data.original_image;
+  if (data.generation) page.generation = { ...data.generation, references: referenceSnapshot };
+  return page;
+}
+
+function renderGenerationDetails(page) {
+  const g = page && page.generation;
+  document.getElementById('generationdetails').hidden = !g;
+  document.getElementById('downloadoriginal').hidden = !(page && page.original_image);
+  document.getElementById('generationprompt').value = g ? g.prompt || '' : '';
+  document.getElementById('generationinfo').textContent = g
+    ? g.model + ' · ' + g.level + ' · high quality · ' + (g.cleanup ? 'gray removal on' : 'original linework') : '';
+}
+
+document.getElementById('reusesettings').onclick = () => {
+  const g = book[current] && book[current].generation;
+  if (!g) return;
+  document.getElementById('subject').value = g.subject || '';
+  document.getElementById('level').value = g.level;
+  document.getElementById('cleanup').checked = !!g.cleanup;
+  const refs = g.references || {};
+  styleReference = refs.style ? { ...refs.style } : null;
+  renderStyleReference();
+  const selectedIds = [];
+  (refs.characters || []).forEach((snapshot, i) => {
+    let character = characters.find((c) => c.name === snapshot.name && c.description === snapshot.description &&
+      JSON.stringify(c.refs || []) === JSON.stringify(snapshot.refs || []));
+    if (!character) {
+      character = { ...snapshot, refs: [...(snapshot.refs || [])], id: 'reuse' + Date.now().toString(36) + '-' + i };
+      characters.push(character);
+    }
+    selectedIds.push(character.id);
+  });
+  saveCharacters();
+  renderCharacters();
+  document.querySelectorAll('#charchk input').forEach((box) => { box.checked = selectedIds.includes(box.dataset.char); });
+  document.getElementById('status').textContent = 'Settings restored. Edit the scene description, then compose a new page.';
+};
+document.getElementById('downloadoriginal').onclick = () => {
+  const page = book[current];
+  if (!page || !page.original_image) return;
+  const a = document.createElement('a');
+  a.href = 'data:image/png;base64,' + page.original_image;
+  a.download = 'fusion-coloring-original-' + (current + 1) + '.png';
+  a.click();
+};
 
 function variantLabel(v) {
   return { story: 'Story page', titlepage: 'Title page', copyright: 'Copyright page',
@@ -699,6 +800,7 @@ function renderCount() {
 function show(i) {
   current = i;
   const page = book[i];
+  renderGenerationDetails(page);
   const sheet = document.getElementById('sheet');
   const sview = document.getElementById('storyview');
   const img = document.getElementById('plate');
@@ -856,10 +958,10 @@ function loadCharacters() {
   } catch (e) { /* corrupted — start fresh */ }
 }
 
-function downscaleRef(dataUrl, cb) {
+function downscaleRef(dataUrl, cb, maxSize = 1024, onError = null) {
   const img = new Image();
   img.onload = () => {
-    const MAX = 512;
+    const MAX = maxSize;
     let w = img.naturalWidth, h = img.naturalHeight;
     if (Math.max(w, h) > MAX) {
       const s = MAX / Math.max(w, h);
@@ -870,7 +972,7 @@ function downscaleRef(dataUrl, cb) {
     c.getContext('2d').drawImage(img, 0, 0, w, h);
     cb(c.toDataURL('image/png').split(',')[1]);
   };
-  img.onerror = () => cb(dataUrl.split(',')[1]);
+  img.onerror = () => onError ? onError() : cb(dataUrl.split(',')[1]);
   img.src = dataUrl;
 }
 
@@ -984,6 +1086,9 @@ document.getElementById('batchstart').onclick = async () => {
   const charPayload = chars.map((c) => ({ name: c.name, description: c.description || '' }));
   const charRefs = [];
   chars.forEach((c) => (c.refs || []).forEach((r) => charRefs.push(r)));
+  const referenceSnapshot = captureGenerationReferences(chars);
+  const cleanup = document.getElementById('cleanup').checked;
+  const styleImage = referenceSnapshot.style ? referenceSnapshot.style.image : null;
 
   batchRunning = true;
   batchStop = false;
@@ -1019,12 +1124,12 @@ document.getElementById('batchstart').onclick = async () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: key, subject: row.scene, level: level,
-          characters: charPayload, references: charRefs }),
+          characters: charPayload, references: charRefs, style_reference: styleImage, cleanup }),
         signal: ctrl.signal
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
-      book.push({ kind: 'art', image: data.image, caption: row.scene });
+      book.push(generatedPage(data, row.scene, referenceSnapshot));
       row.dot.className = 'qdot done';
       done++;
     } catch (e) {
@@ -1083,6 +1188,9 @@ document.getElementById('compose').onclick = async () => {
   const charPayload = chars.map((c) => ({ name: c.name, description: c.description || '' }));
   const charRefs = [];
   chars.forEach((c) => (c.refs || []).forEach((r) => charRefs.push(r)));
+  const referenceSnapshot = captureGenerationReferences(chars);
+  const cleanup = document.getElementById('cleanup').checked;
+  const styleImage = referenceSnapshot.style ? referenceSnapshot.style.image : null;
   if (chars.length) {
     status.textContent = 'Pressing the plate with ' + chars.map((c) => c.name).join(', ') +
       '… this takes a little while. Press once.';
@@ -1091,20 +1199,19 @@ document.getElementById('compose').onclick = async () => {
     const res = await fetch('/compose', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key, subject, level, characters: charPayload, references: charRefs }),
+      body: JSON.stringify({ key, subject, level, characters: charPayload, references: charRefs, style_reference: styleImage, cleanup }),
       signal: ctrl.signal
     });
     const data = await res.json();
     if (!res.ok) { status.textContent = data.error || 'Failed.'; return; }
     const cur = book[current];
     if (cur && cur.kind === 'art' && !cur.image) {
-      cur.image = data.image;
-      cur.caption = subject;
+      Object.assign(cur, generatedPage(data, subject, referenceSnapshot));
       renderThumbs();
       show(current);
       status.textContent = 'Plate filled. Select the next blank plate for the following scene.';
     } else {
-      book.push({ kind: 'art', image: data.image, caption: subject });
+      book.push(generatedPage(data, subject, referenceSnapshot));
       renderCount();
       renderThumbs();
       show(book.length - 1);
@@ -1131,7 +1238,7 @@ padBtn.onclick = () => {
 
 saveBookBtn.onclick = () => {
   const status = document.getElementById('status');
-  const blob = new Blob([JSON.stringify({ app: 'fusion-coloring', version: 3, pages: book, ornament: storyOrnament, marks: marksOn(), characters: characters, kdp: kdpSaveData() })], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ app: 'fusion-coloring', version: 4, pages: book, styleReference: styleReference, ornament: storyOrnament, marks: marksOn(), characters: characters, kdp: kdpSaveData() })], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'fusion-coloring-book.json';
@@ -1160,11 +1267,14 @@ loadFile.onchange = () => {
             subtitle: p.subtitle || '', body: p.body || '', note: p.note || '',
             publisher: p.publisher || '' });
         } else if (p.image) {
-          book.push({ kind: 'art', image: p.image, caption: p.caption || '', w: p.w || 0, h: p.h || 0 });
+          book.push({ kind: 'art', image: p.image, caption: p.caption || '', w: p.w || 0, h: p.h || 0,
+            generation: p.generation || null, original_image: p.original_image || null });
         } else {
           book.push({ kind: 'blank' });
         }
       }
+      styleReference = (!Array.isArray(data) && data.styleReference && typeof data.styleReference.image === 'string') ? data.styleReference : null;
+      renderStyleReference();
       storyOrnament = (!Array.isArray(data) && data.ornament) ? data.ornament : null;
       const pv = document.getElementById('sornprev');
       if (storyOrnament && storyOrnament.image) {
@@ -2528,7 +2638,8 @@ def clean_to_lineart(b64):
         # Dark cores (< 80) stay as lines; mid-gray fills and light areas become white
         img = img.point(lambda p: p if p < 80 else 255)
         out = BytesIO()
-        img.save(out, format="PNG", optimize=True)
+        # The PDF decoder accepts RGB/RGBA PNGs, not Pillow's grayscale PNG.
+        img.convert("RGB").save(out, format="PNG", optimize=True)
         return base64.b64encode(out.getvalue()).decode()
     except Exception:
         return b64
@@ -2831,6 +2942,67 @@ def _edits_fields(boundary, prompt, model="gpt-image-2.5-flare"):
             _mp_field(boundary, "quality", "high"))
 
 
+COLORING_PROMPT_VERSION = "2026-10-quality-1"
+COLORING_STANDARD = (
+    "Create one polished portrait black-and-white coloring-book illustration. "
+    "Expressive appealing subjects, natural poses, distinct personality, and believable anatomy. "
+    "Crisp confident black outlines on white paper, slightly stronger outer silhouettes and clear object separation. "
+    "Purposeful detail and well-defined enclosed spaces that are comfortable to color. "
+    "Keep essential artwork comfortably inside the page edges. "
+    "No color, gray shading, crosshatching, stippling, scratchy fur, woodgrain microtexture, text, labels, or watermark. "
+    "Leave coloring areas white; avoid large black filled areas. "
+)
+COLORING_AUDIENCES = {
+    "easy": (
+        "Audience: children. Simplify the ENTIRE illustration while preserving charm and expressive subjects. "
+        "One clear main activity, a few supporting objects, very simple background, large spacious shapes. "
+        "Use fewer plants with broad leaves, fewer flowers with large simple petals, plain fabrics and cushions, "
+        "simple furniture and baskets with very few divisions. Animal markings are a few broad enclosed patches. "
+        "Omit tiny patterns, fringe, dense foliage, small textures, and unnecessary decorative objects. "
+        "Simplify or omit secondary details from the scene description and reference to meet this complexity. "
+        "Use clear medium-to-bold outlines throughout, not just on the main subject. "
+    ),
+    "medium": (
+        "Audience: teens. Appealing expressive subjects and a coherent scene with moderate purposeful detail. "
+        "Clear medium-weight outlines, broad animal markings, a few decorative motifs and readable background objects. "
+        "Keep generous coloring spaces across subjects, plants, fabrics, borders, and background. "
+        "Avoid crowded textures and tiny repetitive patterns. "
+    ),
+    "detailed": (
+        "Audience: adults. Sophisticated inviting illustration with rich, balanced, purposeful detail. "
+        "Use confident clear outlines and restrained decorative patterns with usable coloring spaces. "
+        "Preserve expression, natural proportions, and balanced negative space. "
+        "Apply readable detail to background, plants, fabrics, borders, and subjects without dense microtexture "
+        "or excessively fine lines. Complexity must enrich the scene without crowding it. "
+    ),
+}
+
+
+def coloring_prompt(subject, level, characters, has_style_reference=False):
+    prompt = COLORING_STANDARD + COLORING_AUDIENCES[level]
+    if has_style_reference:
+        prompt += (
+            "The FIRST input image is an approved ARTWORK STYLE reference: follow its illustration quality, "
+            "line clarity, expressive character treatment, and colorable shapes. "
+            "Create the requested scene rather than copying its composition, objects, or lettering. "
+            "The audience instructions above override reference complexity across the entire scene. "
+            "Any following input images are CHARACTER IDENTITY references. "
+        )
+    prompt += "\nRequested scene: " + subject
+    char_lines = []
+    for c in characters:
+        if not isinstance(c, dict):
+            continue
+        name = (c.get("name") or "").strip()
+        desc = (c.get("description") or "").strip()
+        if name:
+            char_lines.append(name + ": " + (desc or "see character reference images"))
+    if char_lines:
+        prompt += ("\nCharacter identities: preserve their recognizable features and clothing, "
+                   "rendered as black outline art at the selected audience complexity.\n" + "\n".join(char_lines))
+    return prompt
+
+
 def edit_image(key, prompt, image_bytes, mask_bytes):
     """Call the images edit API with a mask. Returns (b64, None) or (None, error).
 
@@ -2893,32 +3065,22 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "Key and a description are both required."})
             return
         level = (body.get("level") or "medium").strip()
-        styles = {
-            "easy": "Very simple children's coloring-book page, portrait orientation. Light-to-medium weight black ink outlines only (not heavy). Large completely open white shapes a young child can color. Hair, clothing, and background are outline only — no filled areas, no gray, no shading inside any shape. Minimal background. Absolutely no color, no gray fills, no solid black areas except the lines themselves, no text. Solid white background. ",
-            "medium": "Teen coloring-book page, portrait orientation. Clean light-to-medium weight black ink outlines only. All areas inside shapes (hair, fabric, skin, sky, objects) must remain open white for coloring — outline only, no fills, no gray shading, no solid regions. Moderate detail with open white space between lines. Absolutely no color, no gray fills, no shading, no text. Solid white background. ",
-            "detailed": "Intricate adult coloring-book page, portrait orientation. Fine delicate black ink outlines only. Even dense areas (hair, feathers, patterns, foliage) must be open linework with white space inside every region so they can be colored — never filled or shaded. Dense but organized, with clear open areas between lines. Absolutely no color, no gray fills, no shading, no solid black except the lines, no text. Solid white background. ",
-        }
-        prompt = styles.get(level, styles["medium"]) + subject
-        chars = body.get("characters") or []
-        char_lines = []
-        for c in chars:
-            if not isinstance(c, dict):
-                continue
-            name = (c.get("name") or "").strip()
-            desc = (c.get("description") or "").strip()
-            if name:
-                char_lines.append(name + ": " + (desc or "(see reference images)"))
-        if char_lines:
-            prompt += ("\n\nCharacters must match the reference images in features, clothing, and identity, rendered as pure black line art only (no color):\n" + "\n".join(char_lines))
+        if level not in COLORING_AUDIENCES:
+            self._json(400, {"error": "Choose children, teens, or adults complexity."})
+            return
+        style_reference = body.get("style_reference")
+        prompt = coloring_prompt(subject, level, body.get("characters") or [], bool(style_reference))
 
         references = body.get("references") or []
         ref_images = []
         try:
+            if style_reference:
+                ref_images.append(base64.b64decode(style_reference, validate=True))
             for r in references:
                 if r:
-                    ref_images.append(base64.b64decode(r))
+                    ref_images.append(base64.b64decode(r, validate=True))
         except Exception:
-            self._json(400, {"error": "Could not read a character reference image."})
+            self._json(400, {"error": "Could not read a reference image."})
             return
         model = "gpt-image-2.5-sunburst" if level == "detailed" else "gpt-image-2.5-flare"
         if ref_images:
@@ -2928,16 +3090,32 @@ class Handler(BaseHTTPRequestHandler):
         if err:
             self._json(400, {"error": err})
             return
-        # Clean to pure line art for reliable coloring pages
-        image = clean_to_lineart(image)
+        # Preserve model linework by default. Gray removal is an explicit choice.
+        original_image = image
+        cleanup = body.get("cleanup") is True
+        if cleanup:
+            image = clean_to_lineart(image)
         # Fail fast: make sure the picture is printable before claiming success,
         # instead of blowing up later at PDF time.
         try:
-            png_to_rgb(base64.b64decode(image))
+            width, height, _ = png_to_rgb(base64.b64decode(image))
         except Exception as e:
             self._json(400, {"error": "The picture came back in a format the press can't print (" + str(e) + "). Press compose once more."})
             return
-        self._json(200, {"image": image})
+        result = {
+            "image": image,
+            "generation": {
+                "prompt_version": COLORING_PROMPT_VERSION,
+                "prompt": prompt, "subject": subject, "level": level,
+                "model": model, "quality": "high", "cleanup": cleanup,
+                "width": width, "height": height,
+                "reference_count": len(ref_images),
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            },
+        }
+        if cleanup and image != original_image:
+            result["original_image"] = original_image
+        self._json(200, result)
 
     def pdf(self, body):
         raw_pages = body.get("pages") or []
