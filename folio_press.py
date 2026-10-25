@@ -532,6 +532,8 @@ HTML = """<!DOCTYPE html>
             <button class="ghost" id="preflight" hidden>KDP preflight check</button>
             <ul class="preflight" id="preflightlist"></ul>
             <button class="ghost" id="savebook" hidden>Save book file</button>
+            <p class="status" id="booksavestatus" role="status" aria-live="polite"></p>
+            <a id="bookdownloadlink" download="fusion-coloring-book.json" hidden>Download book file</a>
             <button class="ghost" id="loadbook">Load book file</button>
             <input type="file" id="loadfile" accept="application/json,.json" hidden>
             <h2 class="sub">%%MANDALA_MED%%KDP publishing</h2>
@@ -1236,15 +1238,25 @@ padBtn.onclick = () => {
   show(book.length - 1);
 };
 
+let bookDownloadUrl = null;
 saveBookBtn.onclick = () => {
-  const status = document.getElementById('status');
-  const blob = new Blob([JSON.stringify({ app: 'fusion-coloring', version: 4, pages: book, styleReference: styleReference, ornament: storyOrnament, marks: marksOn(), characters: characters, kdp: kdpSaveData() })], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'fusion-coloring-book.json';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  status.textContent = 'Book file saved. Keep it somewhere safe — it holds every page.';
+  const status = document.getElementById('booksavestatus');
+  const link = document.getElementById('bookdownloadlink');
+  try {
+    const blob = new Blob([JSON.stringify({ app: 'fusion-coloring', version: 4, pages: book, styleReference: styleReference, ornament: storyOrnament, marks: marksOn(), characters: characters, kdp: kdpSaveData() })], { type: 'application/json' });
+    const nextUrl = URL.createObjectURL(blob);
+    // Use an attached, visible link for Safari. Keep it alive for a manual
+    // retry rather than revoking it before the user can finish saving.
+    const previousUrl = bookDownloadUrl;
+    bookDownloadUrl = nextUrl;
+    link.href = nextUrl;
+    link.hidden = false;
+    if (previousUrl) URL.revokeObjectURL(previousUrl);
+    status.textContent = 'Book download requested. Check your browser downloads. If nothing starts, click Download book file below. Keep this tab open until the file is saved.';
+    link.click();
+  } catch (error) {
+    status.textContent = 'Could not prepare the book download. Your pages are still in this tab. Keep it open and download each image while we resolve the problem.';
+  }
 };
 
 loadBookBtn.onclick = () => loadFile.click();
