@@ -227,7 +227,7 @@ HTML = """<!DOCTYPE html>
   .thumbs { display:flex; gap:.4rem; flex-wrap:wrap; justify-content:center; max-width:520px; }
   .thumbs button { width:64px; height:80px; padding:0; margin:0; border-radius:4px; overflow:hidden; background:#fff; border:1px solid var(--line); }
   .thumbs button.active { outline:2px solid var(--forest); }
-  .thumbs img { width:100%; height:100%; object-fit:cover; display:block; }
+  .thumbs img { width:100%; height:100%; object-fit:contain; display:block; }
   .blank-thumb { width:100%; height:100%; background:#fff; }
   .printcheck { font-size:.8rem; color:var(--forest); margin:0; max-width:440px; text-align:center; line-height:1.4; }
   .preflight { list-style:none; margin:.6rem 0 0; padding:0; font-size:.82rem; text-align:left; }
@@ -316,6 +316,35 @@ HTML = """<!DOCTYPE html>
   #bookidentity { font-weight:700; }
   #bookbackupstate[data-state="ready"] { color:var(--forest); }
   #bookbackupstate[data-state="changed"] { color:#8a4314; font-weight:700; }
+  /* Keep page navigation beside the artwork, independent of preview scrolling. */
+  .layout { grid-template-columns:minmax(300px,380px) minmax(0,1fr); }
+  .canvas { display:grid; grid-template-columns:minmax(0,1fr) 112px;
+    grid-template-rows:auto minmax(0,1fr); gap:0 1rem; overflow:hidden; min-width:0; padding:0 1rem 1rem; }
+  .workbar { grid-column:1 / -1; }
+  .stage { min-width:0; min-height:0; overflow-y:auto; justify-content:flex-start; gap:.65rem; padding:.3rem .4rem 1rem; }
+  .selected-page { font-size:.9rem; font-weight:700; color:var(--forest); margin:0; text-align:center; }
+  .sheet { flex:none; }
+  .sheet img { aspect-ratio:auto; height:clamp(180px,calc(100vh - 480px),650px); object-fit:contain; }
+  .caption { max-height:4.1em; overflow-y:auto; }
+  .pagepicker { min-height:0; overflow-y:auto; border-left:1px solid var(--line); padding:.3rem .3rem 1rem .8rem; }
+  .pagepicker h2 { font-size:.9rem; margin:0 0 .35rem; text-align:center; }
+  .pagepickerhint { font-size:.75rem; line-height:1.3; margin:0 0 .6rem; text-align:center; }
+  .thumbs { flex-direction:column; flex-wrap:nowrap; align-items:center; gap:.6rem; max-width:none; }
+  .thumbs button { position:relative; flex:none; width:76px; height:108px; padding:3px 3px 21px; }
+  .thumbs button.active { outline:3px solid var(--forest); outline-offset:1px; }
+  .thumbs button:focus-visible { outline:3px solid #254da1; outline-offset:2px; }
+  .thumb-number { position:absolute; bottom:0; left:0; right:0; height:20px; line-height:20px;
+    font-size:.75rem; font-weight:700; color:var(--ink); background:var(--paper); text-align:center; }
+  .thumbs button.active .thumb-number { background:var(--forest); color:#fff; }
+  @media (max-width:800px) {
+    .layout { grid-template-columns:minmax(0,1fr); }
+    .canvas { grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto auto; overflow:visible; scroll-margin-top:.5rem; }
+    .pagepicker { grid-row:2; max-height:none; overflow:visible; border-left:0; border-bottom:1px solid var(--line); padding:.4rem 0 .8rem; }
+    .pagepicker h2, .pagepickerhint { text-align:left; }
+    .thumbs { flex-direction:row; justify-content:flex-start; overflow-x:auto; padding:.4rem; }
+    .stage { grid-row:3; overflow:visible; padding-top:.8rem; }
+    .sheet img { height:auto; max-height:65vh; }
+  }
 </style>
 </head>
 <body>
@@ -602,9 +631,10 @@ HTML = """<!DOCTYPE html>
       </div>
     </details>
   </aside>
-  <main class="canvas">
+  <main class="canvas" id="studiocanvas" aria-label="Selected book page">
     <div class="workbar"><span class="wrule"></span>%%MANDALA_BAR%%<span class="wlabel">The Studio Canvas</span>%%MANDALA_BAR%%<span class="wrule"></span></div>
-    <div class="stage">
+    <div class="stage" id="pagestage">
+    <p class="selected-page" id="selectedpage" role="status" aria-live="polite">No page selected</p>
     <div class="emptystate" id="emptystate">
       <div class="es-orn">❦</div>
       <h2>Your canvas awaits</h2>
@@ -622,8 +652,12 @@ HTML = """<!DOCTYPE html>
       <button class="ghost" id="strlines" hidden>Strengthen lines…</button>
       <button class="ghost" id="dlimage" hidden>Download this image</button>
     </div>
-    <div class="thumbs" id="thumbs"></div>
     </div>
+    <nav class="pagepicker" aria-label="Book pages">
+      <h2>Book pages</h2>
+      <p class="pagepickerhint" id="pagepickerhint">Your pages will appear here.</p>
+      <div class="thumbs" id="thumbs"></div>
+    </nav>
   </main>
 </div>
 <div class="editmodal" id="editmodal" hidden>
@@ -876,7 +910,12 @@ function show(i) {
   const folio = document.getElementById('folio');
   document.querySelectorAll('.thumbs button').forEach((b, idx) => {
     b.classList.toggle('active', idx === i);
+    if (idx === i) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
   });
+  document.getElementById('selectedpage').textContent = page
+    ? 'Page ' + (i + 1) + ' of ' + book.length + ' · ' + (page.kind === 'story' ? 'Text page' : page.image ? 'Artwork' : 'Blank page')
+    : 'No page selected';
   const has = !!page;
   const empty = book.length === 0;
   document.getElementById('emptystate').hidden = !empty;
@@ -977,10 +1016,13 @@ function updatePrintCheck(page, i) {
 function renderThumbs() {
   const box = document.getElementById('thumbs');
   box.innerHTML = '';
+  document.getElementById('pagepickerhint').textContent = book.length
+    ? 'Click a page to show it here.' : 'Your pages will appear here.';
   book.forEach((page, i) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.title = 'Page ' + (i + 1);
+    b.setAttribute('aria-label', 'Show page ' + (i + 1) + (page.kind === 'story' ? ': ' + (page.title || 'Text page') : page.image ? ': Artwork' : ': Blank page'));
     if (page.kind === 'story') {
       const d = document.createElement('div');
       d.className = 'text-thumb';
@@ -1001,10 +1043,23 @@ function renderThumbs() {
     } else {
       b.innerHTML = '<div class="blank-thumb"></div>';
     }
-    b.onclick = () => show(i);
-    if (i === current) b.classList.add('active');
+    const number = document.createElement('span');
+    number.className = 'thumb-number';
+    number.textContent = String(i + 1);
+    b.appendChild(number);
+    b.onclick = () => selectBookPage(i);
+    if (i === current) { b.classList.add('active'); b.setAttribute('aria-current', 'page'); }
     box.appendChild(b);
   });
+}
+
+function selectBookPage(i) {
+  show(i);
+  document.getElementById('pagestage').scrollTop = 0;
+  document.getElementById('studiocanvas').scrollTop = 0;
+  if (window.matchMedia('(max-width:800px)').matches) {
+    document.getElementById('studiocanvas').scrollIntoView({block:'start', behavior:'auto'});
+  }
 }
 
 /* ---- Characters ---- */
@@ -1391,7 +1446,7 @@ loadFile.onchange = () => {
       bookCheckpoint = captureBookCheckpoint();
       renderCount();
       renderThumbs();
-      show(book.length - 1);
+      selectBookPage(book.length - 1);
       status.textContent = 'Book loaded: ' + book.length + ' pages.';
       document.getElementById('booktoolbarstatus').textContent = status.textContent;
       document.getElementById('quickloadbook').textContent = 'Open another saved book';
