@@ -262,21 +262,17 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   run("book[book.length-1].caption='Changed caption only'");
   await run('flushCreationSave()');
   assert.equal(db.assets.size,assetCount,'Caption changes must reuse stored images');
-  const keyStore=new Map();
-  context.localStorage={getItem:k=>keyStore.get(k)||null,setItem:(k,v)=>keyStore.set(k,v),removeItem:k=>keyStore.delete(k)};
-  get('rememberkey').checked=true;get('key').value='test-only-remembered-key';
-  run('rememberApiKey()');get('key').value='';run('restoreApiKey()');
-  assert.equal(get('key').value,'test-only-remembered-key');
-  assert.equal(JSON.stringify(run('bookDocument()')).includes('test-only-remembered-key'),false);
-  get('keyforget').onclick();
-  assert.equal(keyStore.size,0);assert.equal(get('key').value,'');
+  get('key').value='test-only-key';run('acknowledgeApiKey()');
+  assert.match(get('keystatus').textContent,/Key ready in this tab/);
+  assert.equal(JSON.stringify(run('bookDocument()')).includes('test-only-key'),false);
+  get('keyforget').onclick();assert.equal(get('key').value,'');
   // Storage requests time out instead of leaving gallery controls waiting forever.
   const originalTimer=context.setTimeout;let timeoutCallback;
   context.setTimeout=fn=>{timeoutCallback=fn;return 1;};
   const pending=run('requestResult({})');timeoutCallback();
   await assert.rejects(pending,/did not respond in time/);
   context.setTimeout=originalTimer;
-  console.log('PASS: deduplicated artwork, metadata-only renames, hydrated originals/references, remembered key isolation and storage timeout');
+  console.log('PASS: deduplicated artwork, metadata-only renames, hydrated originals/references, password-manager key isolation and storage timeout');
 
   console.log('PASS: My Creations saves, prompts/originals, gallery/search/reopen, failure recovery and multi-tab conflict preservation');
 
