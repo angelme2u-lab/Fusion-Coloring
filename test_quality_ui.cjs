@@ -183,7 +183,7 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   assert.equal(run('book.length'),2, 'A failed download must not remove pages');
 
   // Transactional storage double: commit both stores together, or neither on abort.
-  const db = {books:new Map(),documents:new Map(),fail:false,
+  const db = {books:new Map(),documents:new Map(),assets:new Map(),fail:false,
     transaction(names,mode) {
       const pending=[]; let aborted=false;
       const tx={error:null, abort(){aborted=true;setImmediate(()=>tx.onabort?.());}, objectStore(name){
@@ -230,7 +230,7 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   db.fail=true;
   run("book[0].caption='Unsaved change';refreshBookState()");
   assert.equal(await run('flushCreationSave()'),false);
-  assert.match(get('creationstatus').textContent,/Not saved/);
+  assert.match(get('creationstatus').textContent,/could not finish saving/);
   assert.equal(db.documents.get(firstId).data.pages[0].caption,'A revised saved prompt');
   await get('newcreation').onclick();
   assert.equal(run('book[0].caption'),'Unsaved change','Storage failure must prevent switching away');
@@ -242,6 +242,42 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   assert.notEqual(run('creationId'),firstId);
   assert.equal(db.documents.get(firstId).data.pages[0].caption,'A revised saved prompt');
   assert.match(get('creationstatus').textContent,/separate copy/);
+
+  // Images and repeated reference strings are stored once; renaming does not rewrite artwork.
+  context.largeImage='x'.repeat(100000);
+  run("book.push({kind:'art',image:largeImage,original_image:largeImage,generation:{prompt:'large test',references:{style:{image:largeImage}}}});show(book.length-1)");
+  await run('flushCreationSave()');
+  const assetId=run('creationId'), assetCount=db.assets.size;
+  assert.equal(assetCount,1);
+  const compactDoc=db.documents.get(assetId);
+  assert.equal(compactDoc.storage_format,'assets-v1');
+  assert.ok(JSON.stringify(compactDoc).length<30000);
+  get('creationname').value='Renamed large book';
+  await run('flushCreationSave()');
+  assert.equal(db.documents.get(assetId),compactDoc,'Rename must not rewrite the image manifest');
+  assert.equal(db.assets.size,assetCount);
+  await run(`openCreation('${assetId}')`);
+  assert.equal(run('book[book.length-1].image'),context.largeImage);
+  assert.equal(run('book[book.length-1].generation.references.style.image'),context.largeImage);
+  run("book[book.length-1].caption='Changed caption only'");
+  await run('flushCreationSave()');
+  assert.equal(db.assets.size,assetCount,'Caption changes must reuse stored images');
+  const keyStore=new Map();
+  context.localStorage={getItem:k=>keyStore.get(k)||null,setItem:(k,v)=>keyStore.set(k,v),removeItem:k=>keyStore.delete(k)};
+  get('rememberkey').checked=true;get('key').value='test-only-remembered-key';
+  run('rememberApiKey()');get('key').value='';run('restoreApiKey()');
+  assert.equal(get('key').value,'test-only-remembered-key');
+  assert.equal(JSON.stringify(run('bookDocument()')).includes('test-only-remembered-key'),false);
+  get('keyforget').onclick();
+  assert.equal(keyStore.size,0);assert.equal(get('key').value,'');
+  // Storage requests time out instead of leaving gallery controls waiting forever.
+  const originalTimer=context.setTimeout;let timeoutCallback;
+  context.setTimeout=fn=>{timeoutCallback=fn;return 1;};
+  const pending=run('requestResult({})');timeoutCallback();
+  await assert.rejects(pending,/did not respond in time/);
+  context.setTimeout=originalTimer;
+  console.log('PASS: deduplicated artwork, metadata-only renames, hydrated originals/references, remembered key isolation and storage timeout');
+
   console.log('PASS: My Creations saves, prompts/originals, gallery/search/reopen, failure recovery and multi-tab conflict preservation');
 
   console.log('PASS: single/batch generation, reference snapshots, key exclusion, save/load, settings reuse, and legacy books');
