@@ -404,11 +404,18 @@ HTML = """<!DOCTYPE html>
       <summary>%ICON_01%<span class="n">01</span> Create pages</summary>
       <div class="stepbody">
             <p>Paste your key once. Describe the plate. Press compose. The picture is tall, with your sentence and a page number under it.</p>
+            <form id="keyform" autocomplete="on">
+            <label for="keyaccount">Connection</label>
+            <input id="keyaccount" name="username" autocomplete="username" value="OpenAI API" readonly>
             <label for="key">API key</label>
             <div class="keyrow">
-              <input id="key" type="password" autocomplete="off">
+              <input id="key" name="password" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false">
               <button class="ghost" id="keyshow" type="button" title="Show the key to check it">Show</button>
             </div>
+            <button class="ghost" id="keysave" type="submit">Use this key</button>
+            <button class="ghost" id="keyforget" type="button">Clear key from this tab</button>
+            <p class="status" id="keystatus" role="status" aria-live="polite">Use Safari Passwords to autofill your saved key. Your key is never included in book backups.</p>
+            </form>
             <label for="level">Complexity</label>
             <select id="level">
               <option value="easy">Children — simple scenes, large shapes</option>
@@ -797,6 +804,7 @@ let checkpointKind = '';
 let creationsDb = null, creationsReady = false, restoringCreation = false;
 let creationId = null, creationRevision = 0, creationCheckpoint = null, savedCreationName = '';
 let creationTimer = null, creationSaving = null, creationList = [], creationCoverSource = '', creationCover = '';
+let creationAssetCache = new Map();
 
 // Compare small field snapshots, keeping image strings by reference. Never
 // stringify all image data during navigation just to display save status.
@@ -1107,6 +1115,8 @@ function renderThumbs() {
       b.appendChild(d);
     } else if (page.image) {
       const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.decoding = 'async';
       img.src = 'data:image/png;base64,' + page.image;
       img.alt = '';
       b.appendChild(img);
@@ -1413,6 +1423,19 @@ document.getElementById('keyshow').onclick = () => {
   const showing = k.type === 'text';
   k.type = showing ? 'password' : 'text';
   b.textContent = showing ? 'Show' : 'Hide';
+};
+
+// Use the browser password manager; never persist secrets in application storage.
+function acknowledgeApiKey() {
+  document.getElementById('keystatus').textContent = document.getElementById('key').value.trim()
+    ? 'Key ready in this tab. Use Safari Passwords for saved-key autofill on later visits.'
+    : 'Click the API key field and choose your saved key from Safari Passwords.';
+}
+document.getElementById('key').addEventListener('change', acknowledgeApiKey);
+document.getElementById('keyform').onsubmit = event => { event.preventDefault(); acknowledgeApiKey(); };
+document.getElementById('keyforget').onclick = () => {
+  document.getElementById('key').value = '';
+  document.getElementById('keystatus').textContent = 'Key cleared from this tab. Your Safari Passwords entry is unchanged.';
 };
 
 document.getElementById('compose').onclick = async () => {
@@ -2491,6 +2514,7 @@ function creationStatus(text) { document.getElementById('creationstatus').textCo
 function resetCreationIdentity(name) {
   creationId = null; creationRevision = 0; creationCheckpoint = null; savedCreationName = '';
   creationCoverSource = ''; creationCover = '';
+  creationAssetCache = new Map();
   document.getElementById('creationname').value = name || 'Untitled book';
 }
 function newCreationId() {
@@ -2503,18 +2527,38 @@ function scheduleCreationSave() {
   if (!creationsReady || restoringCreation || (!book.length && !creationId) || !creationDirty()) return;
   clearTimeout(creationTimer);
   creationStatus('Changes waiting to save in this browser…');
-  creationTimer = setTimeout(() => { flushCreationSave(); }, 900);
+  creationTimer = setTimeout(() => { flushCreationSave(); }, 2000);
 }
-function requestResult(request) {
+function requestResult(request, timeoutMs = 15000) {
   return new Promise((resolve,reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('Storage unavailable'));
+    const timer = setTimeout(() => reject(new Error('Browser storage did not respond in time')), timeoutMs);
+    request.onsuccess = () => { clearTimeout(timer); resolve(request.result); };
+    request.onerror = () => { clearTimeout(timer); reject(request.error || new Error('Storage unavailable')); };
   });
 }
-function writeCreation(meta, data, expectedRevision) {
+function prepareCreationDocument(data) {
+  const cache = new Map(creationAssetCache), assets = [];
+  const visit = value => {
+    if (typeof value === 'string' && value.length > 4096) {
+      let id = cache.get(value);
+      if (!id) { id = 'asset-' + newCreationId(); cache.set(value,id); assets.push({id,data:value}); }
+      return {__fusionAsset:id};
+    }
+    if (Array.isArray(value)) return value.map(visit);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key,item]) => [key,visit(item)]));
+    return value;
+  };
+  return {manifest:visit(data), assets, cache};
+}
+function writeCreation(meta, prepared, expectedRevision) {
   return new Promise((resolve,reject) => {
-    const tx = creationsDb.transaction(['books','documents'], 'readwrite');
+    const tx = creationsDb.transaction(['books','documents','assets'], 'readwrite');
     let reason = null;
+    const timer = setTimeout(() => {
+      reason = new Error('Browser storage did not finish saving in time');
+      try { tx.abort(); } catch (_) {}
+      reject(reason);
+    }, 15000);
     const store = tx.objectStore('books');
     const check = store.get(meta.id);
     check.onsuccess = () => {
@@ -2522,10 +2566,13 @@ function writeCreation(meta, data, expectedRevision) {
         reason = new Error('This book changed in another tab.'); reason.conflict = true; tx.abort(); return;
       }
       store.put(meta);
-      tx.objectStore('documents').put({id:meta.id, data});
+      if (prepared) {
+        for (const asset of prepared.assets) tx.objectStore('assets').put(asset);
+        tx.objectStore('documents').put({id:meta.id, data:prepared.manifest, storage_format:'assets-v1'});
+      }
     };
-    tx.oncomplete = () => resolve();
-    tx.onabort = () => reject(reason || tx.error || new Error('Browser storage is full or unavailable'));
+    tx.oncomplete = () => { clearTimeout(timer); resolve(); };
+    tx.onabort = () => { clearTimeout(timer); reject(reason || tx.error || new Error('Browser storage is full or unavailable')); };
     tx.onerror = () => {}; // onabort is the authoritative failure; never claim a request alone saved.
   });
 }
@@ -2533,7 +2580,9 @@ async function creationThumbnail(image) {
   if (!image) return '';
   return new Promise(resolve => {
     const img = new Image();
+    const timer = setTimeout(() => resolve(''), 2500);
     img.onload = () => {
+      clearTimeout(timer);
       try {
         const canvas = document.createElement('canvas');
         canvas.width = 140; canvas.height = 190;
@@ -2545,66 +2594,102 @@ async function creationThumbnail(image) {
         resolve(canvas.toDataURL('image/jpeg',.8));
       } catch (_) { resolve(''); }
     };
-    img.onerror = () => resolve('');
+    img.onerror = () => { clearTimeout(timer); resolve(''); };
     img.src = 'data:image/png;base64,' + image;
   });
 }
-async function flushCreationSave() {
+async function flushCreationSave(attempt = 0) {
   clearTimeout(creationTimer);
   if (restoringCreation) return true;
   if (!creationsReady) return !book.length || confirm('My Creations storage is unavailable. Keep a downloaded backup before switching books. Continue?');
   if (creationSaving) {
     const ok = await creationSaving;
-    return ok ? flushCreationSave() : false;
+    return ok ? flushCreationSave(attempt) : false;
   }
   if ((!book.length && !creationId) || !creationDirty()) return true;
   creationSaving = (async () => {
     creationStatus('Saving in this browser…');
     try {
       if (!creationId) creationId = newCreationId();
-      const id = creationId, snapshot = captureBookCheckpoint(), name = creationName(), data = bookDocument();
-      const firstImage = data.pages.find(p => p.image)?.image || '';
+      const id = creationId, snapshot = captureBookCheckpoint(), name = creationName();
+      const documentChanged = !sameBookCheckpoint(creationCheckpoint,snapshot);
+      const prepared = documentChanged ? prepareCreationDocument(bookDocument()) : null;
+      const firstImage = book.find(p => p.image)?.image || '';
       if (creationCoverSource !== firstImage) {
         creationCover = await creationThumbnail(firstImage); creationCoverSource = firstImage;
       }
-      const meta = {id, name, revision:creationRevision + 1, count:data.pages.length,
+      const meta = {id, name, revision:creationRevision + 1, count:book.length,
         cover:creationCover, updatedAt:new Date().toISOString()};
       let forked = false;
-      try { await writeCreation(meta, data, creationRevision); }
+      try { await writeCreation(meta, prepared, creationRevision); }
       catch (error) {
         if (!error.conflict) throw error;
         // Preserve both tabs' work instead of overwriting another tab's newer book.
         meta.id = newCreationId(); meta.revision = 1; meta.name = name + ' (separate copy)';
-        await writeCreation(meta, data, 0);
+        await writeCreation(meta, prepared || prepareCreationDocument(bookDocument()), 0);
         creationId = meta.id; document.getElementById('creationname').value = meta.name; forked = true;
       }
       creationRevision = meta.revision; creationCheckpoint = snapshot; savedCreationName = meta.name;
+      if (prepared) creationAssetCache = prepared.cache;
       creationStatus((forked ? 'Another tab changed the book; saved your work as a separate copy. ' : '') +
         'Saved in My Creations in this browser at ' + new Date(meta.updatedAt).toLocaleTimeString() + '.');
       return true;
     } catch (error) {
-      creationStatus('Not saved to My Creations — browser storage is full or unavailable. Keep this tab open and use Save book backup.');
+      creationStatus('My Creations could not finish saving. Your pages are still here. Use Save book backup, then try Save now again.');
       return false;
     }
   })();
   const ok = await creationSaving;
   creationSaving = null;
-  if (ok && creationDirty()) return flushCreationSave();
+  if (ok && creationDirty()) {
+    if (attempt < 2) return flushCreationSave(attempt + 1);
+    scheduleCreationSave();
+    return false;
+  }
   return ok;
 }
 async function readCreation(id) {
   const tx = creationsDb.transaction(['books','documents'], 'readonly');
   const values = await Promise.all([requestResult(tx.objectStore('books').get(id)), requestResult(tx.objectStore('documents').get(id))]);
   if (!values[0] || !values[1]) throw new Error('Book unavailable');
-  return {meta:values[0], data:values[1].data};
+  const record = values[1], cache = new Map();
+  if (record.storage_format !== 'assets-v1') return {meta:values[0],data:record.data,cache};
+  const ids = new Set();
+  const collect = value => {
+    if (value && typeof value === 'object') {
+      if (typeof value.__fusionAsset === 'string') ids.add(value.__fusionAsset);
+      else Object.values(value).forEach(collect);
+    }
+  };
+  collect(record.data);
+  const assetTx = creationsDb.transaction('assets','readonly');
+  const rows = await Promise.all([...ids].map(key => requestResult(assetTx.objectStore('assets').get(key))));
+  const assets = new Map();
+  for (const row of rows) {
+    if (!row || typeof row.data !== 'string') throw new Error('Missing artwork');
+    assets.set(row.id,row.data); cache.set(row.data,row.id);
+  }
+  const hydrate = value => {
+    if (Array.isArray(value)) return value.map(hydrate);
+    if (value && typeof value === 'object') {
+      if (typeof value.__fusionAsset === 'string') {
+        if (!assets.has(value.__fusionAsset)) throw new Error('Missing artwork');
+        return assets.get(value.__fusionAsset);
+      }
+      return Object.fromEntries(Object.entries(value).map(([key,item]) => [key,hydrate(item)]));
+    }
+    return value;
+  };
+  return {meta:values[0],data:hydrate(record.data),cache};
 }
 async function openCreation(id) {
   try {
     if (!(await flushCreationSave())) return;
-    const {meta,data} = await readCreation(id);
+    const {meta,data,cache} = await readCreation(id);
     restoringCreation = true;
     restoreBookDocument(data);
     creationId = meta.id; creationRevision = meta.revision;
+    creationAssetCache = cache;
     document.getElementById('creationname').value = meta.name;
     savedCreationName = meta.name; creationCheckpoint = captureBookCheckpoint();
     creationCoverSource = book.find(p => p.image)?.image || ''; creationCover = meta.cover || '';
@@ -2637,14 +2722,16 @@ function renderCreationGallery() {
   }
 }
 async function showCreations() {
-  if (!(await flushCreationSave())) return;
   document.getElementById('creationsmodal').hidden = false;
   document.getElementById('creationsclose').focus();
+  document.getElementById('creationsmessage').textContent = 'Opening your saved books…';
   try {
+    const saved = await flushCreationSave();
     if (!creationsReady) throw new Error('Storage unavailable');
     creationList = await requestResult(creationsDb.transaction('books','readonly').objectStore('books').getAll());
     creationList.sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
     renderCreationGallery();
+    if (!saved) document.getElementById('creationsmessage').textContent = 'Your current changes are not saved yet. Keep a downloaded backup. Previously saved books are shown below.';
   } catch (_) { document.getElementById('creationsmessage').textContent = 'My Creations storage is unavailable in this browser. Your downloaded book backups can still be opened.'; }
 }
 function closeCreations() {
@@ -2686,10 +2773,11 @@ window.addEventListener('beforeunload', event => {
 async function initCreations() {
   try {
     if (!window.indexedDB) throw new Error('Unavailable');
-    const request = window.indexedDB.open('fusion-coloring-creations',1);
+    const request = window.indexedDB.open('fusion-coloring-creations',2);
     request.onupgradeneeded = () => {
-      request.result.createObjectStore('books',{keyPath:'id'});
-      request.result.createObjectStore('documents',{keyPath:'id'});
+      for (const name of ['books','documents','assets']) {
+        if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name,{keyPath:'id'});
+      }
     };
     request.onblocked = () => creationStatus('Close older Fusion Coloring tabs to enable My Creations.');
     creationsDb = await requestResult(request); creationsReady = true;
