@@ -23,21 +23,21 @@ const get = id => { if (!elements.has(id)) elements.set(id, new Element()); retu
 const inputs = () => get('charchk').children.flatMap(l => l.children).filter(c => c.tag === 'input');
 const handlers = {};
 const document = {
-  addEventListener(name,fn){handlers[name]=fn;},
+  addEventListener(name,fn){const previous=handlers[name];handlers[name]=event=>{if(previous) previous(event);fn(event);};},
   getElementById:get, createElement:tag=>new Element(tag), createTextNode:text=>({text}), body:new Element(),
   querySelectorAll:sel => sel === '#charchk input' ? inputs() : sel === '.thumbs button' ? get('thumbs').children : [],
   querySelector:sel => { if(sel === '.enlarge-hint') return get('enlargehint'); const match = sel.match(/data-char="([^"]+)"/); return match ? inputs().find(c=>c.dataset.char === match[1]) : null; }
 };
 let savedBlob, responses = [], requests = [];
 class Reader {
-  readAsText(file) { this.result = file.text; this.onload(); }
+  readAsText(file) { this.result = file.text; return this.onload(); }
 }
 class FakeImage {
   constructor() { this.naturalWidth=1024; this.naturalHeight=1536; }
   set src(value) { if (this.onload) this.onload(); }
 }
 const context = vm.createContext({document, Blob, FileReader:Reader, Image:FakeImage, AbortController,
-  window:{matchMedia:()=>({matches:false})},
+  window:{matchMedia:()=>({matches:false}),addEventListener(){}}, confirm:()=>true,
   setTimeout:()=>1, clearTimeout(){}, console, localStorage:{getItem:()=>null,setItem(){}},
   URL:{createObjectURL:b=>{savedBlob=b;return 'blob:test'},revokeObjectURL(){}},
   fetch:async (url, options) => {
@@ -47,7 +47,7 @@ const context = vm.createContext({document, Blob, FileReader:Reader, Image:FakeI
   }
 });
 const run = code => vm.runInContext(code, context);
-get('level').value='medium'; get('key').value='test-only-key';
+get('level').value='medium'; get('key').value='test-only-key'; get('creationsmodal').hidden=true;
 run(script);
 assert.equal(get('quicksavebook').disabled,true);
 get('quickloadbook').onclick();
@@ -84,7 +84,7 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   assert.equal(saved.pages[0].generation.references.style.name,'approved.png');
   assert.equal(JSON.stringify(saved).includes('test-only-key'),false);
   get('loadfile').files=[{name:'My cats-2.json',text:JSON.stringify(saved)}];
-  get('loadfile').onchange();
+  await get('loadfile').onchange();
   assert.match(get('booktoolbarstatus').textContent,/Book loaded: 1 pages/);
   assert.match(get('bookidentity').textContent,/My cats-2.json.*1 page/);
   assert.match(get('bookbackupstate').textContent,/Reopened successfully.*No changes since reopening/);
@@ -126,13 +126,13 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   get('savebook').onclick();
   const treatedBook=JSON.parse(await savedBlob.text());
   get('loadfile').files=[{name:'treated.json',text:JSON.stringify(treatedBook)}];
-  get('loadfile').onchange();
+  await get('loadfile').onchange();
   assert.equal(run('book[book.length - 1].generation.level'),'medium');
   assert.equal(run('book[book.length - 1].line_treatment.mode'),'gentle');
   assert.equal(run('book[book.length - 1].image'),'stronger-pixels');
 
   get('loadfile').files=[{text:JSON.stringify({version:3,pages:[{kind:'art',image:'legacy',caption:'Original artwork'},{kind:'story',body:'Original story'}]})}];
-  get('loadfile').onchange();
+  await get('loadfile').onchange();
   assert.equal(run('book.length'),2);
   assert.equal(run('book[0].image'),'legacy');
   assert.equal(run('book[1].body'),'Original story');
@@ -181,5 +181,68 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   get('savebook').onclick();
   assert.match(get('booksavestatus').textContent,/pages are still in this tab/);
   assert.equal(run('book.length'),2, 'A failed download must not remove pages');
+
+  // Transactional storage double: commit both stores together, or neither on abort.
+  const db = {books:new Map(),documents:new Map(),fail:false,
+    transaction(names,mode) {
+      const pending=[]; let aborted=false;
+      const tx={error:null, abort(){aborted=true;setImmediate(()=>tx.onabort?.());}, objectStore(name){
+        return {get(id){const request={};queueMicrotask(()=>{request.result=structuredClone(db[name].get(id));request.onsuccess?.();});return request;},
+          getAll(){const request={};queueMicrotask(()=>{request.result=structuredClone([...db[name].values()]);request.onsuccess?.();});return request;},
+          put(value){pending.push([name,structuredClone(value)]);}};
+      }};
+      if(mode==='readwrite') setImmediate(()=>{
+        if(aborted)return;
+        if(db.fail){tx.error=new Error('quota');tx.onabort?.();return;}
+        for(const [name,value] of pending)db[name].set(value.id,value);
+        tx.oncomplete?.();
+      });
+      return tx;
+    }};
+  context.creationTestDb=db; context.persistenceDoc=treatedBook;
+  run("creationsDb=creationTestDb; creationsReady=true; restoringCreation=true; restoreBookDocument(persistenceDoc); resetCreationIdentity('Unicorn collection'); restoringCreation=false; show(0)");
+  assert.equal(await run('flushCreationSave()'),true);
+  const firstId=run('creationId');
+  assert.equal(db.books.size,1);
+  assert.equal(db.books.get(firstId).name,'Unicorn collection');
+  assert.equal(db.documents.get(firstId).data.pages[0].original_image,'raw-pixels');
+  assert.equal(db.documents.get(firstId).data.pages[0].generation.prompt,'FULL PROMPT');
+  assert.equal(JSON.stringify(db.documents.get(firstId)).includes('test-only-key'),false);
+  assert.match(get('creationstatus').textContent,/Saved in My Creations/);
+  const firstRevision=db.books.get(firstId).revision;
+  run('selectBookPage(1)'); await run('flushCreationSave()');
+  assert.equal(db.books.get(firstId).revision,firstRevision,'Selecting a thumbnail does not rewrite storage');
+  run("book[0].caption='A revised saved prompt'; refreshBookState()");
+  await run('flushCreationSave()');
+  assert.equal(db.documents.get(firstId).data.pages[0].caption,'A revised saved prompt');
+  await get('newcreation').onclick();
+  assert.equal(run('book.length'),0);
+  assert.equal(db.books.size,1,'New book retains existing collection');
+  await run('showCreations()');
+  assert.equal(get('creationgrid').children.length,1);
+  get('creationsearch').value='missing';get('creationsearch').oninput();
+  assert.equal(get('creationgrid').children.length,0);
+  await run(`openCreation('${firstId}')`);
+  assert.equal(run('book[0].caption'),'A revised saved prompt');
+  assert.equal(run('book[0].original_image'),'raw-pixels');
+  assert.equal(run('book[book.length - 1].line_treatment.mode'),'gentle');
+  assert.match(get('creationstatus').textContent,/Reopened/);
+  db.fail=true;
+  run("book[0].caption='Unsaved change';refreshBookState()");
+  assert.equal(await run('flushCreationSave()'),false);
+  assert.match(get('creationstatus').textContent,/Not saved/);
+  assert.equal(db.documents.get(firstId).data.pages[0].caption,'A revised saved prompt');
+  await get('newcreation').onclick();
+  assert.equal(run('book[0].caption'),'Unsaved change','Storage failure must prevent switching away');
+  db.fail=false;
+  // A newer revision in another tab must never be silently overwritten.
+  db.books.get(firstId).revision+=1;
+  assert.equal(await run('flushCreationSave()'),true);
+  assert.equal(db.books.size,2);
+  assert.notEqual(run('creationId'),firstId);
+  assert.equal(db.documents.get(firstId).data.pages[0].caption,'A revised saved prompt');
+  assert.match(get('creationstatus').textContent,/separate copy/);
+  console.log('PASS: My Creations saves, prompts/originals, gallery/search/reopen, failure recovery and multi-tab conflict preservation');
+
   console.log('PASS: single/batch generation, reference snapshots, key exclusion, save/load, settings reuse, and legacy books');
 })().catch(error=>{console.error(error);process.exitCode=1});
