@@ -14,17 +14,19 @@ class Element {
   appendChild(child) { this.children.push(child); return child; }
   addEventListener() {} removeAttribute(name) { delete this[name]; } setAttribute(name,value) { this[name]=value; }
   click() { this.clickCount = (this.clickCount || 0) + 1; } scrollIntoView() { this.scrollCalls=(this.scrollCalls||0)+1; }
+  focus() { document.activeElement=this; }
   querySelector(tag) { return this.children.find(c => c.tag === tag); }
   getContext() { return {}; }
 }
 const elements = new Map();
 const get = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
 const inputs = () => get('charchk').children.flatMap(l => l.children).filter(c => c.tag === 'input');
+const handlers = {};
 const document = {
-  addEventListener(){},
+  addEventListener(name,fn){handlers[name]=fn;},
   getElementById:get, createElement:tag=>new Element(tag), createTextNode:text=>({text}), body:new Element(),
   querySelectorAll:sel => sel === '#charchk input' ? inputs() : sel === '.thumbs button' ? get('thumbs').children : [],
-  querySelector:sel => { const match = sel.match(/data-char="([^"]+)"/); return match ? inputs().find(c=>c.dataset.char === match[1]) : null; }
+  querySelector:sel => { if(sel === '.enlarge-hint') return get('enlargehint'); const match = sel.match(/data-char="([^"]+)"/); return match ? inputs().find(c=>c.dataset.char === match[1]) : null; }
 };
 let savedBlob, responses = [], requests = [];
 class Reader {
@@ -146,6 +148,27 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   assert.equal(get('selectedpage').textContent,'Page 1 of 2 · Artwork');
   assert.equal(get('thumbs').children[0]['aria-current'],'page');
   assert.equal(get('thumbs').children[1]['aria-current'],undefined);
+  assert.match(get('bookbackupstate').textContent,/No changes since reopening/);
+  get('enlargeimage').onclick();
+  assert.equal(get('imageviewer').hidden,false);
+  assert.equal(get('viewerimage').src,'data:image/png;base64,legacy');
+  assert.equal(get('viewertitle').textContent,'Page 1 of 2 — enlarged');
+  assert.equal(document.activeElement,get('viewerclose'));
+  get('viewerin').onclick();
+  assert.equal(get('viewerzoom').textContent,'150%');
+  assert.equal(get('viewerpicture').style.width,'150%');
+  run('setImageViewerZoom(99)');
+  assert.equal(get('viewerzoom').textContent,'400%');
+  assert.equal(get('viewerin').disabled,true);
+  get('viewerfit').onclick();
+  assert.equal(get('viewerzoom').textContent,'Fit');
+  assert.equal(get('viewerout').disabled,true);
+  handlers.keydown({key:'Tab',preventDefault(){}});
+  assert.equal(document.activeElement,get('viewerspace'));
+  handlers.keydown({key:'Escape',preventDefault(){}});
+  assert.equal(get('imageviewer').hidden,true);
+  assert.equal(get('viewerimage').src,undefined);
+  assert.equal(document.activeElement,get('enlargeimage'));
   assert.match(get('bookbackupstate').textContent,/No changes since reopening/);
   context.window.matchMedia=()=>({matches:true});
   get('thumbs').children[1].onclick();
