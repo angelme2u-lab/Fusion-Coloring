@@ -336,6 +336,20 @@ HTML = """<!DOCTYPE html>
   .thumb-number { position:absolute; bottom:0; left:0; right:0; height:20px; line-height:20px;
     font-size:.75rem; font-weight:700; color:var(--ink); background:var(--paper); text-align:center; }
   .thumbs button.active .thumb-number { background:var(--forest); color:#fff; }
+  .enlarge-image { display:block; width:100%; margin:0; padding:0; border:0; border-radius:0; background:#fff; cursor:zoom-in; }
+  .enlarge-image:focus-visible { outline:3px solid var(--forest); outline-offset:3px; }
+  .enlarge-hint { display:block; text-align:center; font-size:.85rem; color:var(--forest); padding:.4rem 0; }
+  .imageviewer { position:fixed; inset:0; z-index:100; background:rgba(15,22,18,.85); padding:1rem; display:flex; }
+  .imageviewer[hidden] { display:none; }
+  .viewerbox { display:flex; flex-direction:column; min-width:0; width:100%; height:100%; background:var(--paper); border-radius:10px; overflow:hidden; }
+  .viewertools { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; padding:.6rem 1rem; border-bottom:1px solid var(--line); }
+  .viewertools h2 { font-size:1rem; margin:0 auto 0 0; }
+  .viewertools button { width:auto; margin:0; padding:.55rem .9rem; border-radius:6px; }
+  .viewerzoom { min-width:3rem; text-align:center; font-size:.9rem; }
+  .viewerhelp { font-size:.85rem; margin:0; padding:.3rem 1rem; }
+  .viewerspace { flex:1; min-height:0; overflow:auto; background:#ddd; overscroll-behavior:contain; }
+  .viewerpicture { width:100%; height:100%; }
+  .viewerpicture img { display:block; width:100%; height:100%; object-fit:contain; background:#fff; }
   @media (max-width:800px) {
     .layout { grid-template-columns:minmax(0,1fr); }
     .canvas { grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto auto; overflow:visible; scroll-margin-top:.5rem; }
@@ -641,7 +655,10 @@ HTML = """<!DOCTYPE html>
       <p>Describe a scene in <strong>01 · Create pages</strong>, then press <strong>Compose page</strong>.<br>Your artwork will appear here, ready for its finishing touches.</p>
     </div>
     <div class="sheet" id="sheet" hidden>
-      <img id="plate" alt="">
+      <button class="enlarge-image" id="enlargeimage" type="button" aria-label="Enlarge selected image" aria-haspopup="dialog">
+        <img id="plate" alt="">
+        <span class="enlarge-hint">Click image to enlarge</span>
+      </button>
       <div class="caption" id="caption">Empty plate</div>
       <div class="folio" id="folio"></div>
     </div>
@@ -659,6 +676,22 @@ HTML = """<!DOCTYPE html>
       <div class="thumbs" id="thumbs"></div>
     </nav>
   </main>
+</div>
+<div class="imageviewer" id="imageviewer" role="dialog" aria-modal="true" aria-labelledby="viewertitle" aria-describedby="viewerhelp" hidden>
+  <div class="viewerbox">
+    <div class="viewertools">
+      <h2 id="viewertitle">Enlarged image</h2>
+      <button class="ghost" id="viewerout" type="button" aria-label="Zoom out">−</button>
+      <span class="viewerzoom" id="viewerzoom" role="status" aria-live="polite">Fit</span>
+      <button class="ghost" id="viewerin" type="button" aria-label="Zoom in">+</button>
+      <button class="ghost" id="viewerfit" type="button">Fit image</button>
+      <button id="viewerclose" type="button">Close viewer</button>
+    </div>
+    <p class="viewerhelp" id="viewerhelp">Zoom in for detail, then scroll to look around. Press Escape or Close viewer to return.</p>
+    <div class="viewerspace" id="viewerspace" tabindex="0" aria-label="Scrollable enlarged artwork">
+      <div class="viewerpicture" id="viewerpicture"><img id="viewerimage" alt=""></div>
+    </div>
+  </div>
 </div>
 <div class="editmodal" id="editmodal" hidden>
   <div class="editbox">
@@ -908,6 +941,8 @@ function show(i) {
   const img = document.getElementById('plate');
   const caption = document.getElementById('caption');
   const folio = document.getElementById('folio');
+  document.getElementById('enlargeimage').disabled = !(page && page.kind === 'art' && page.image);
+  document.querySelector('.enlarge-hint').hidden = !(page && page.kind === 'art' && page.image);
   document.querySelectorAll('.thumbs button').forEach((b, idx) => {
     b.classList.toggle('active', idx === i);
     if (idx === i) b.setAttribute('aria-current', 'page');
@@ -1061,6 +1096,55 @@ function selectBookPage(i) {
     document.getElementById('studiocanvas').scrollIntoView({block:'start', behavior:'auto'});
   }
 }
+
+let imageViewerZoom = 1;
+function setImageViewerZoom(value) {
+  imageViewerZoom = Math.max(1, Math.min(4, value));
+  const picture = document.getElementById('viewerpicture');
+  picture.style.width = (imageViewerZoom * 100) + '%';
+  picture.style.height = (imageViewerZoom * 100) + '%';
+  document.getElementById('viewerzoom').textContent = imageViewerZoom === 1 ? 'Fit' : Math.round(imageViewerZoom * 100) + '%';
+  document.getElementById('viewerout').disabled = imageViewerZoom === 1;
+  document.getElementById('viewerin').disabled = imageViewerZoom === 4;
+  if (imageViewerZoom === 1) {
+    document.getElementById('viewerspace').scrollTop = 0;
+    document.getElementById('viewerspace').scrollLeft = 0;
+  }
+}
+function closeImageViewer() {
+  document.getElementById('imageviewer').hidden = true;
+  document.getElementById('viewerimage').removeAttribute('src');
+  document.getElementById('enlargeimage').focus();
+}
+document.getElementById('enlargeimage').onclick = () => {
+  const page = book[current];
+  if (!page || page.kind !== 'art' || !page.image) return;
+  const image = document.getElementById('viewerimage');
+  image.src = 'data:image/png;base64,' + page.image;
+  image.alt = 'Enlarged artwork, page ' + (current + 1);
+  document.getElementById('viewertitle').textContent = 'Page ' + (current + 1) + ' of ' + book.length + ' — enlarged';
+  document.getElementById('imageviewer').hidden = false;
+  setImageViewerZoom(1);
+  document.getElementById('viewerclose').focus();
+};
+document.getElementById('viewerin').onclick = () => setImageViewerZoom(imageViewerZoom + .5);
+document.getElementById('viewerout').onclick = () => setImageViewerZoom(imageViewerZoom - .5);
+document.getElementById('viewerfit').onclick = () => setImageViewerZoom(1);
+document.getElementById('viewerclose').onclick = closeImageViewer;
+document.getElementById('imageviewer').onclick = (event) => {
+  if (event.target === document.getElementById('imageviewer')) closeImageViewer();
+};
+document.addEventListener('keydown', (event) => {
+  if (document.getElementById('imageviewer').hidden) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeImageViewer(); }
+  if (event.key === 'Tab') {
+    const controls = ['viewerout','viewerin','viewerfit','viewerclose','viewerspace']
+      .map(id => document.getElementById(id)).filter(el => !el.disabled);
+    const index = controls.indexOf(document.activeElement);
+    event.preventDefault();
+    controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus();
+  }
+});
 
 /* ---- Characters ---- */
 let characters = [];
