@@ -12,7 +12,8 @@ class Element {
   }
   set innerHTML(value) { this.children = []; }
   appendChild(child) { this.children.push(child); return child; }
-  addEventListener() {} removeAttribute() {} click() { this.clickCount = (this.clickCount || 0) + 1; } scrollIntoView() {}
+  addEventListener() {} removeAttribute(name) { delete this[name]; } setAttribute(name,value) { this[name]=value; }
+  click() { this.clickCount = (this.clickCount || 0) + 1; } scrollIntoView() { this.scrollCalls=(this.scrollCalls||0)+1; }
   querySelector(tag) { return this.children.find(c => c.tag === tag); }
   getContext() { return {}; }
 }
@@ -22,7 +23,7 @@ const inputs = () => get('charchk').children.flatMap(l => l.children).filter(c =
 const document = {
   addEventListener(){},
   getElementById:get, createElement:tag=>new Element(tag), createTextNode:text=>({text}), body:new Element(),
-  querySelectorAll:sel => sel === '#charchk input' ? inputs() : [],
+  querySelectorAll:sel => sel === '#charchk input' ? inputs() : sel === '.thumbs button' ? get('thumbs').children : [],
   querySelector:sel => { const match = sel.match(/data-char="([^"]+)"/); return match ? inputs().find(c=>c.dataset.char === match[1]) : null; }
 };
 let savedBlob, responses = [], requests = [];
@@ -34,6 +35,7 @@ class FakeImage {
   set src(value) { if (this.onload) this.onload(); }
 }
 const context = vm.createContext({document, Blob, FileReader:Reader, Image:FakeImage, AbortController,
+  window:{matchMedia:()=>({matches:false})},
   setTimeout:()=>1, clearTimeout(){}, console, localStorage:{getItem:()=>null,setItem(){}},
   URL:{createObjectURL:b=>{savedBlob=b;return 'blob:test'},revokeObjectURL(){}},
   fetch:async (url, options) => {
@@ -134,6 +136,24 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   assert.equal(run('book[1].body'),'Original story');
   assert.equal(get('generationdetails').hidden,true);
   assert.equal(run('styleReference'),null);
+  assert.equal(get('thumbs').children.length,2);
+  assert.equal(get('thumbs').children[0]['aria-label'],'Show page 1: Artwork');
+  get('pagestage').scrollTop=700;
+  get('thumbs').children[0].onclick();
+  assert.equal(run('current'),0);
+  assert.equal(get('plate').src,'data:image/png;base64,legacy');
+  assert.equal(get('pagestage').scrollTop,0);
+  assert.equal(get('selectedpage').textContent,'Page 1 of 2 · Artwork');
+  assert.equal(get('thumbs').children[0]['aria-current'],'page');
+  assert.equal(get('thumbs').children[1]['aria-current'],undefined);
+  assert.match(get('bookbackupstate').textContent,/No changes since reopening/);
+  context.window.matchMedia=()=>({matches:true});
+  get('thumbs').children[1].onclick();
+  assert.equal(get('storyview').hidden,false);
+  assert.equal(get('sheet').hidden,true);
+  assert.equal(get('studiocanvas').scrollCalls,1);
+  assert.equal(get('thumbs').children[1]['aria-current'],'page');
+  assert.equal(get('thumbs').children[0]['aria-current'],undefined);
   context.URL.createObjectURL=()=>{throw new Error('download unavailable')};
   get('savebook').onclick();
   assert.match(get('booksavestatus').textContent,/pages are still in this tab/);
