@@ -350,6 +350,20 @@ HTML = """<!DOCTYPE html>
   .viewerspace { flex:1; min-height:0; overflow:auto; background:#ddd; overscroll-behavior:contain; }
   .viewerpicture { width:100%; height:100%; }
   .viewerpicture img { display:block; width:100%; height:100%; object-fit:contain; background:#fff; }
+  .creationbar { display:flex; gap:.5rem; align-items:center; justify-content:center; flex-wrap:wrap; margin:.5rem auto 0; }
+  .creationbar label { margin:0; font-size:.8rem; }
+  .creationbar input { width:min(280px,65vw); padding:.35rem .6rem; font-size:.9rem; }
+  .creationbar button { width:auto; margin:0; padding:.4rem .8rem; font-size:.9rem; }
+  #creationstatus { margin:.3rem 0 0; font-size:.85rem; }
+  .creationsbox { width:min(100%,1100px); margin:auto; height:95%; }
+  .creationsearch { padding:.6rem 1rem; }
+  .creationsearch input { padding:.5rem .7rem; }
+  .creationgrid { overflow-y:auto; padding:1rem; display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:1rem; }
+  .creationcard { border:1px solid var(--line); border-radius:8px; background:#fff; padding:.7rem; min-width:0; }
+  .creationcard img { width:100%; height:160px; object-fit:contain; background:#fafafa; }
+  .creationcard h3 { font-size:1rem; margin:.4rem 0; overflow-wrap:anywhere; }
+  .creationcard p { font-size:.8rem; margin:.3rem 0; }
+  .creationcard button { border-radius:6px; font-size:.9rem; }
   @media (max-width:800px) {
     .layout { grid-template-columns:minmax(0,1fr); }
     .canvas { grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto auto; overflow:visible; scroll-margin-top:.5rem; }
@@ -366,10 +380,18 @@ HTML = """<!DOCTYPE html>
   <div class="masthead">%%MANDALA_HEAD%%<span class="brand">Fusion Coloring</span>%%MANDALA_HEAD%%</div>
   <div class="tagline">Your creative space</div>
   <div class="booktoolbar" role="group" aria-label="Save and open books">
+    <button id="mycreations" type="button">My Creations</button>
     <button id="quickloadbook" type="button">Open saved book</button>
     <button class="ghost" id="quicksavebook" type="button" disabled>Save book backup</button>
     <a id="quickbookdownload" download="fusion-coloring-book.json" hidden>Download book file</a>
   </div>
+  <div class="creationbar">
+    <label for="creationname">Book name</label>
+    <input id="creationname" maxlength="100" placeholder="Name your book" value="Untitled book">
+    <button class="ghost" id="newcreation" type="button">New book</button>
+    <button class="ghost" id="savecreation" type="button">Save now</button>
+  </div>
+  <p id="creationstatus" role="status" aria-live="polite">Checking My Creations storage…</p>
   <div class="bookstate" aria-label="Current book and backup status">
     <p id="bookidentity">No book open</p>
     <p id="bookbackupstate" role="status" aria-live="polite">Create pages or open a saved book to begin.</p>
@@ -677,6 +699,15 @@ HTML = """<!DOCTYPE html>
     </nav>
   </main>
 </div>
+<div class="imageviewer" id="creationsmodal" role="dialog" aria-modal="true" aria-labelledby="creationstitle" hidden>
+  <div class="viewerbox creationsbox">
+    <div class="viewertools"><h2 id="creationstitle">My Creations</h2><button id="creationsclose" type="button">Back to studio</button></div>
+    <p class="viewerhelp">Books save automatically in this browser on this device. Keep downloaded backups too; clearing website data removes these saves.</p>
+    <div class="creationsearch"><label for="creationsearch">Find a book by name</label><input id="creationsearch" type="search" placeholder="Search your books"></div>
+    <p class="viewerhelp" id="creationsmessage" role="status" aria-live="polite"></p>
+    <div class="creationgrid" id="creationgrid"></div>
+  </div>
+</div>
 <div class="imageviewer" id="imageviewer" role="dialog" aria-modal="true" aria-labelledby="viewertitle" aria-describedby="viewerhelp" hidden>
   <div class="viewerbox">
     <div class="viewertools">
@@ -763,6 +794,9 @@ let openedBookAt = '';
 let backupRequestedAt = '';
 let bookCheckpoint = null;
 let checkpointKind = '';
+let creationsDb = null, creationsReady = false, restoringCreation = false;
+let creationId = null, creationRevision = 0, creationCheckpoint = null, savedCreationName = '';
+let creationTimer = null, creationSaving = null, creationList = [], creationCoverSource = '', creationCover = '';
 
 // Compare small field snapshots, keeping image strings by reference. Never
 // stringify all image data during navigation just to display save status.
@@ -800,6 +834,7 @@ function refreshBookState() {
     : 'This book has no backup yet — choose Save book backup.';
   else if (checkpointKind === 'opened') state.textContent = 'Reopened successfully at ' + openedBookAt + ' · No changes since reopening.';
   else state.textContent = 'Backup download requested at ' + backupRequestedAt + ' · Check Downloads to confirm the file was saved.';
+  scheduleCreationSave();
 }
 
 function renderStyleReference() {
@@ -1450,7 +1485,7 @@ saveBookBtn.onclick = () => {
   const status = document.getElementById('booksavestatus');
   const link = document.getElementById('bookdownloadlink');
   try {
-    const blob = new Blob([JSON.stringify({ app: 'fusion-coloring', version: 4, pages: book, styleReference: styleReference, ornament: storyOrnament, marks: marksOn(), characters: characters, kdp: kdpSaveData() })], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(bookDocument())], { type: 'application/json' });
     const nextUrl = URL.createObjectURL(blob);
     // Use an attached, visible link for Safari. Keep it alive for a manual
     // retry rather than revoking it before the user can finish saving.
@@ -1479,32 +1514,25 @@ loadBookBtn.onclick = () => loadFile.click();
 document.getElementById('quickloadbook').onclick = () => loadFile.click();
 document.getElementById('quicksavebook').onclick = saveBookBtn.onclick;
 
-loadFile.onchange = () => {
-  const status = document.getElementById('status');
-  const f = loadFile.files[0];
-  if (!f) return;
-  document.getElementById('booktoolbarstatus').textContent = 'Opening ' + f.name + '…';
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const data = JSON.parse(reader.result);
+function restoreBookDocument(data) {
       const pages = Array.isArray(data) ? data : data.pages;
       if (!Array.isArray(pages)) throw new Error('bad book file');
-      book.length = 0;
+      const restoredPages = [];
       for (const p of pages) {
         if (!p) continue;
         if (p.kind === 'story') {
-          book.push({ kind: 'story', variant: p.variant || 'story', title: p.title || '',
+          restoredPages.push({ kind: 'story', variant: p.variant || 'story', title: p.title || '',
             subtitle: p.subtitle || '', body: p.body || '', note: p.note || '',
             publisher: p.publisher || '' });
         } else if (p.image) {
-          book.push({ kind: 'art', image: p.image, caption: p.caption || '', w: p.w || 0, h: p.h || 0,
+          restoredPages.push({ kind: 'art', image: p.image, caption: p.caption || '', w: p.w || 0, h: p.h || 0,
             generation: p.generation || null, original_image: p.original_image || null,
             line_treatment: p.line_treatment || null });
         } else {
-          book.push({ kind: 'blank' });
+          restoredPages.push({ kind: 'blank' });
         }
       }
+      book.splice(0, book.length, ...restoredPages);
       styleReference = (!Array.isArray(data) && data.styleReference && typeof data.styleReference.image === 'string') ? data.styleReference : null;
       renderStyleReference();
       storyOrnament = (!Array.isArray(data) && data.ornament) ? data.ornament : null;
@@ -1523,6 +1551,22 @@ loadFile.onchange = () => {
       renderCharacters();
       kdpLoadData(!Array.isArray(data) ? data.kdp : null);
       clearStoryForm();
+}
+
+loadFile.onchange = () => {
+  const status = document.getElementById('status');
+  const f = loadFile.files[0];
+  if (!f) return;
+  document.getElementById('booktoolbarstatus').textContent = 'Opening ' + f.name + '…';
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!Array.isArray(Array.isArray(data) ? data : data.pages)) throw new Error('bad book file');
+      if (!(await flushCreationSave())) throw new Error('Save current book before switching');
+      restoringCreation = true;
+      restoreBookDocument(data);
+      resetCreationIdentity(data.title || (f.name ? f.name.replace(/\\.json$/i, '') : 'Imported book'));
       openedBookFile = f.name || 'Saved book';
       openedBookAt = new Date().toLocaleString();
       backupRequestedAt = '';
@@ -1534,8 +1578,11 @@ loadFile.onchange = () => {
       status.textContent = 'Book loaded: ' + book.length + ' pages.';
       document.getElementById('booktoolbarstatus').textContent = status.textContent;
       document.getElementById('quickloadbook').textContent = 'Open another saved book';
+      restoringCreation = false;
+      scheduleCreationSave();
     } catch (e) {
-      status.textContent = 'Could not read that book file.';
+      restoringCreation = false;
+      status.textContent = 'Could not open that book. Your current work has been kept where possible; check My Creations status.';
       document.getElementById('booktoolbarstatus').textContent = 'Could not open that file. Choose a Fusion Coloring .json book backup.';
     }
     loadFile.value = '';
@@ -1544,7 +1591,7 @@ loadFile.onchange = () => {
     document.getElementById('booktoolbarstatus').textContent = 'Could not read the selected file. Your current pages are still open. Try choosing the backup again.';
     loadFile.value = '';
   };
-  reader.readAsText(f);
+  return reader.readAsText(f);
 };
 
 delPageBtn.onclick = () => {
@@ -2432,9 +2479,230 @@ fetch('/info').then((r) => r.json()).then((d) => {
 }).catch(() => {});
 updateCoverSpec();
 
+
+/* My Creations: private, browser-local IndexedDB documents; no API keys. */
+function bookDocument() {
+  return { app:'fusion-coloring', version:4, title:creationName(), pages:book.map(p => ({...p})),
+    styleReference, ornament:storyOrnament, marks:marksOn(),
+    characters:characters.map(c => ({...c})), kdp:kdpSaveData() };
+}
+function creationName() { return document.getElementById('creationname').value.trim().slice(0,100) || 'Untitled book'; }
+function creationStatus(text) { document.getElementById('creationstatus').textContent = text; }
+function resetCreationIdentity(name) {
+  creationId = null; creationRevision = 0; creationCheckpoint = null; savedCreationName = '';
+  creationCoverSource = ''; creationCover = '';
+  document.getElementById('creationname').value = name || 'Untitled book';
+}
+function newCreationId() {
+  return 'book-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) + '-' + Math.random().toString(36).slice(2);
+}
+function creationDirty() {
+  return !sameBookCheckpoint(creationCheckpoint, captureBookCheckpoint()) || savedCreationName !== creationName();
+}
+function scheduleCreationSave() {
+  if (!creationsReady || restoringCreation || (!book.length && !creationId) || !creationDirty()) return;
+  clearTimeout(creationTimer);
+  creationStatus('Changes waiting to save in this browser…');
+  creationTimer = setTimeout(() => { flushCreationSave(); }, 900);
+}
+function requestResult(request) {
+  return new Promise((resolve,reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Storage unavailable'));
+  });
+}
+function writeCreation(meta, data, expectedRevision) {
+  return new Promise((resolve,reject) => {
+    const tx = creationsDb.transaction(['books','documents'], 'readwrite');
+    let reason = null;
+    const store = tx.objectStore('books');
+    const check = store.get(meta.id);
+    check.onsuccess = () => {
+      if ((check.result ? check.result.revision : 0) !== expectedRevision) {
+        reason = new Error('This book changed in another tab.'); reason.conflict = true; tx.abort(); return;
+      }
+      store.put(meta);
+      tx.objectStore('documents').put({id:meta.id, data});
+    };
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(reason || tx.error || new Error('Browser storage is full or unavailable'));
+    tx.onerror = () => {}; // onabort is the authoritative failure; never claim a request alone saved.
+  });
+}
+async function creationThumbnail(image) {
+  if (!image) return '';
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 140; canvas.height = 190;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,140,190);
+        const scale = Math.min(140 / img.naturalWidth, 190 / img.naturalHeight);
+        const w = img.naturalWidth * scale, h = img.naturalHeight * scale;
+        ctx.drawImage(img,(140-w)/2,(190-h)/2,w,h);
+        resolve(canvas.toDataURL('image/jpeg',.8));
+      } catch (_) { resolve(''); }
+    };
+    img.onerror = () => resolve('');
+    img.src = 'data:image/png;base64,' + image;
+  });
+}
+async function flushCreationSave() {
+  clearTimeout(creationTimer);
+  if (restoringCreation) return true;
+  if (!creationsReady) return !book.length || confirm('My Creations storage is unavailable. Keep a downloaded backup before switching books. Continue?');
+  if (creationSaving) {
+    const ok = await creationSaving;
+    return ok ? flushCreationSave() : false;
+  }
+  if ((!book.length && !creationId) || !creationDirty()) return true;
+  creationSaving = (async () => {
+    creationStatus('Saving in this browser…');
+    try {
+      if (!creationId) creationId = newCreationId();
+      const id = creationId, snapshot = captureBookCheckpoint(), name = creationName(), data = bookDocument();
+      const firstImage = data.pages.find(p => p.image)?.image || '';
+      if (creationCoverSource !== firstImage) {
+        creationCover = await creationThumbnail(firstImage); creationCoverSource = firstImage;
+      }
+      const meta = {id, name, revision:creationRevision + 1, count:data.pages.length,
+        cover:creationCover, updatedAt:new Date().toISOString()};
+      let forked = false;
+      try { await writeCreation(meta, data, creationRevision); }
+      catch (error) {
+        if (!error.conflict) throw error;
+        // Preserve both tabs' work instead of overwriting another tab's newer book.
+        meta.id = newCreationId(); meta.revision = 1; meta.name = name + ' (separate copy)';
+        await writeCreation(meta, data, 0);
+        creationId = meta.id; document.getElementById('creationname').value = meta.name; forked = true;
+      }
+      creationRevision = meta.revision; creationCheckpoint = snapshot; savedCreationName = meta.name;
+      creationStatus((forked ? 'Another tab changed the book; saved your work as a separate copy. ' : '') +
+        'Saved in My Creations in this browser at ' + new Date(meta.updatedAt).toLocaleTimeString() + '.');
+      return true;
+    } catch (error) {
+      creationStatus('Not saved to My Creations — browser storage is full or unavailable. Keep this tab open and use Save book backup.');
+      return false;
+    }
+  })();
+  const ok = await creationSaving;
+  creationSaving = null;
+  if (ok && creationDirty()) return flushCreationSave();
+  return ok;
+}
+async function readCreation(id) {
+  const tx = creationsDb.transaction(['books','documents'], 'readonly');
+  const values = await Promise.all([requestResult(tx.objectStore('books').get(id)), requestResult(tx.objectStore('documents').get(id))]);
+  if (!values[0] || !values[1]) throw new Error('Book unavailable');
+  return {meta:values[0], data:values[1].data};
+}
+async function openCreation(id) {
+  try {
+    if (!(await flushCreationSave())) return;
+    const {meta,data} = await readCreation(id);
+    restoringCreation = true;
+    restoreBookDocument(data);
+    creationId = meta.id; creationRevision = meta.revision;
+    document.getElementById('creationname').value = meta.name;
+    savedCreationName = meta.name; creationCheckpoint = captureBookCheckpoint();
+    creationCoverSource = book.find(p => p.image)?.image || ''; creationCover = meta.cover || '';
+    openedBookFile = meta.name; openedBookAt = new Date().toLocaleString();
+    backupRequestedAt = ''; checkpointKind = 'opened'; bookCheckpoint = captureBookCheckpoint();
+    renderCount(); renderThumbs(); selectBookPage(book.length - 1);
+    document.getElementById('creationsmodal').hidden = true;
+    document.getElementById('mycreations').focus();
+    creationStatus('Reopened “' + meta.name + '” from My Creations in this browser.');
+  } catch (_) {
+    document.getElementById('creationsmessage').textContent = 'Could not reopen that book. Your current book remains available; try your downloaded backup.';
+  } finally { restoringCreation = false; }
+}
+function renderCreationGallery() {
+  const grid = document.getElementById('creationgrid'); grid.innerHTML = '';
+  const query = document.getElementById('creationsearch').value.trim().toLocaleLowerCase();
+  const matches = creationList.filter(b => b.name.toLocaleLowerCase().includes(query));
+  document.getElementById('creationsmessage').textContent = matches.length
+    ? matches.length + ' saved book' + (matches.length === 1 ? '' : 's') + ' in this browser.'
+    : query ? 'No matching books.' : 'No saved books yet. Create a page or open a book backup to begin.';
+  for (const item of matches) {
+    const card = document.createElement('article'); card.className = 'creationcard';
+    if (item.cover) { const img = document.createElement('img'); img.src = item.cover; img.alt = ''; card.appendChild(img); }
+    const title = document.createElement('h3'); title.textContent = item.name; card.appendChild(title);
+    const info = document.createElement('p');
+    info.textContent = item.count + (item.count === 1 ? ' page · ' : ' pages · ') + new Date(item.updatedAt).toLocaleString(); card.appendChild(info);
+    const open = document.createElement('button'); open.type = 'button'; open.textContent = 'Open book';
+    open.setAttribute('aria-label','Open ' + item.name); open.onclick = () => openCreation(item.id); card.appendChild(open);
+    grid.appendChild(card);
+  }
+}
+async function showCreations() {
+  if (!(await flushCreationSave())) return;
+  document.getElementById('creationsmodal').hidden = false;
+  document.getElementById('creationsclose').focus();
+  try {
+    if (!creationsReady) throw new Error('Storage unavailable');
+    creationList = await requestResult(creationsDb.transaction('books','readonly').objectStore('books').getAll());
+    creationList.sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
+    renderCreationGallery();
+  } catch (_) { document.getElementById('creationsmessage').textContent = 'My Creations storage is unavailable in this browser. Your downloaded book backups can still be opened.'; }
+}
+function closeCreations() {
+  document.getElementById('creationsmodal').hidden = true;
+  document.getElementById('mycreations').focus();
+}
+document.getElementById('mycreations').onclick = showCreations;
+document.getElementById('creationsclose').onclick = closeCreations;
+document.getElementById('creationsearch').oninput = renderCreationGallery;
+document.getElementById('creationname').oninput = scheduleCreationSave;
+document.getElementById('savecreation').onclick = async () => {
+  if (!book.length && !creationId) { creationStatus('Create a page or open a saved book first.'); return; }
+  await flushCreationSave();
+};
+document.getElementById('newcreation').onclick = async () => {
+  if (!(await flushCreationSave())) return;
+  restoringCreation = true;
+  restoreBookDocument({pages:[], characters, marks:true});
+  resetCreationIdentity('Untitled book');
+  openedBookFile = ''; openedBookAt = ''; backupRequestedAt = ''; bookCheckpoint = null; checkpointKind = '';
+  renderCount(); renderThumbs(); show(-1);
+  restoringCreation = false;
+  creationStatus('New book. Pages will save automatically in this browser.');
+  document.getElementById('creationname').focus();
+};
+document.addEventListener('keydown', event => {
+  if (document.getElementById('creationsmodal').hidden) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeCreations(); }
+  if (event.key === 'Tab') {
+    const controls = [document.getElementById('creationsclose'), document.getElementById('creationsearch'),
+      ...document.querySelectorAll('#creationgrid button')];
+    const index = controls.indexOf(document.activeElement);
+    event.preventDefault(); controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus();
+  }
+});
+window.addEventListener('beforeunload', event => {
+  if (book.length && creationDirty()) { event.preventDefault(); event.returnValue = ''; }
+});
+async function initCreations() {
+  try {
+    if (!window.indexedDB) throw new Error('Unavailable');
+    const request = window.indexedDB.open('fusion-coloring-creations',1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore('books',{keyPath:'id'});
+      request.result.createObjectStore('documents',{keyPath:'id'});
+    };
+    request.onblocked = () => creationStatus('Close older Fusion Coloring tabs to enable My Creations.');
+    creationsDb = await requestResult(request); creationsReady = true;
+    creationsDb.onversionchange = () => { creationsDb.close(); creationsReady = false; creationStatus('Storage updated in another tab. Save a backup, then reopen this app.'); };
+    creationStatus('My Creations ready — saves stay in this browser on this device.');
+    scheduleCreationSave();
+  } catch (_) { creationStatus('Automatic saving is unavailable in this browser. Use Save book backup to keep your work.'); }
+}
+
 loadCharacters();
 renderCharacters();
 renderCount();
+initCreations();
 </script>
 </body>
 </html>
