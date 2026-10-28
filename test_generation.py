@@ -99,6 +99,14 @@ class GenerationTests(unittest.TestCase):
         self.assertIn("Queen: Distinctive face", prompt)
         self.assertIn("without photorealistic face shading", prompt)
 
+    def test_explicit_creator_exclusions_remain_prominent(self):
+        prompt = app.coloring_prompt(
+            "Elegant unicorn mandala without jewelry or castle", "detailed", [])
+        self.assertIn("strict constraints", prompt)
+        self.assertIn("no jewelry means no pendants", prompt)
+        self.assertIn("Do not substitute similar decorations", prompt)
+        self.assertIn("without jewelry or castle", prompt)
+
     def test_cleanup_retains_the_exact_original(self):
         with patch.object(app, "generate_image", return_value=(self.original, None)):
             status, result = self.compose(cleanup=True)
