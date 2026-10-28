@@ -25,8 +25,7 @@ class PrintPlacementTests(unittest.TestCase):
         self.assertGreaterEqual(x,31.9)
         self.assertGreaterEqual(y,31.9)
         self.assertLessEqual(h+y,764.1)
-        self.assertIn(b"/Width 2400",pdf) if False else None
-        embedded=re.search(rb"/Subtype /Image /Width (\\d+) /Height (\\d+)",pdf)
+        embedded=re.search(rb"/Subtype /Image /Width ([0-9]+) /Height ([0-9]+)",pdf)
         self.assertIsNotNone(embedded)
         self.assertGreaterEqual(int(embedded.group(1)),round(w/72*300)-1)
 
