@@ -79,6 +79,26 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(result["generation"]["prompt_version"], app.COLORING_PROMPT_VERSION)
         self.assertEqual(result["generation"]["level"], "medium")
 
+    def test_scene_led_composition_contract(self):
+        for level in ("easy", "medium", "detailed"):
+            with self.subTest(level=level):
+                prompt = app.coloring_prompt(
+                    "A cat leaps over a puddle in a city street", level, [])
+                self.assertIn("visibly different pose and interaction", prompt)
+                self.assertIn("avoid defaulting to the same centered bust", prompt)
+                self.assertIn("balanced visual weight", prompt)
+                self.assertIn("cat leaps over a puddle", prompt)
+                self.assertNotIn("85 percent", prompt)
+
+    def test_mandala_and_character_reference_instructions(self):
+        prompt = app.coloring_prompt(
+            "Queen in a mandala of roses", "detailed",
+            [{"name": "Queen", "description": "Distinctive face"}])
+        self.assertIn("radial pattern", prompt)
+        self.assertIn("preserving the shape of the eyes", prompt)
+        self.assertIn("Queen: Distinctive face", prompt)
+        self.assertIn("without photorealistic face shading", prompt)
+
     def test_cleanup_retains_the_exact_original(self):
         with patch.object(app, "generate_image", return_value=(self.original, None)):
             status, result = self.compose(cleanup=True)
