@@ -373,6 +373,32 @@ HTML = """<!DOCTYPE html>
     .stage { grid-row:3; overflow:visible; padding-top:.8rem; }
     .sheet img { height:auto; max-height:65vh; }
   }
+  /* Compact desktop controls so the selected artwork is visible immediately. */
+  @media (min-width:1001px) {
+    header { display:grid; grid-template-columns:minmax(240px,.8fr) minmax(0,1.4fr);
+      align-items:center; column-gap:1rem; row-gap:.2rem; padding:.4rem 1rem; text-align:left; }
+    .masthead { grid-column:1; grid-row:1; justify-content:flex-start; gap:.35rem; }
+    .masthead .mandala { width:40px; height:40px; }
+    .brand { font-size:1.45rem; letter-spacing:.08em; }
+    .tagline { grid-column:1; grid-row:2; margin:0; font-size:.8rem; }
+    .booktoolbar { grid-column:2; grid-row:1; justify-content:flex-end; margin:0; }
+    .booktoolbar button, .booktoolbar a { padding:.35rem .7rem; font-size:.84rem; }
+    .creationbar { grid-column:2; grid-row:2; justify-content:flex-end; margin:0; }
+    .creationbar input { width:min(300px,25vw); }
+    .creationbar button { padding:.35rem .65rem; font-size:.83rem; }
+    #creationstatus { grid-column:1; grid-row:3; margin:0; font-size:.74rem; line-height:1.25; }
+    .bookstate { grid-column:2; grid-row:3; display:flex; gap:.55rem; flex-wrap:wrap;
+      align-items:baseline; justify-content:flex-end; max-width:none; margin:0;
+      font-size:.75rem; line-height:1.25; }
+    .bookstate p { margin:0; }
+    #booktoolbarstatus { grid-column:1 / -1; grid-row:4; max-width:none; margin:0;
+      font-size:.74rem; line-height:1.25; text-align:center; }
+    .canvas { padding:0 .65rem .65rem; gap:0 .5rem; }
+    .workbar { padding:.35rem 0; }
+    .stage { padding:.1rem .2rem .6rem; }
+    .sheet { width:min(100%,760px); padding:.4rem; }
+    .sheet img { max-height:calc(100vh - 245px); }
+  }
 </style>
 </head>
 <body>
