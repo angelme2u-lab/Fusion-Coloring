@@ -1075,13 +1075,13 @@ function updatePrintCheck(page, i) {
   if (!page.image) { printCheckEl.textContent = ''; return; }
   const render = () => {
     if (current !== i || !page.w || !page.h) return;
-    const maxW = (612 - 80) / 72, maxH = (792 - 36 - 92) / 72;
+    const maxW = (612 - 64) / 72, maxH = (792 - 28 - (marksOn() ? 55 : 32)) / 72;
     const s = Math.min(maxW / page.w, maxH / page.h);
     const ppi = Math.round(page.w / (page.w * s));
     let text = page.w + ' \u00d7 ' + page.h + ' px \u2192 ' +
       (page.w * s).toFixed(1) + ' \u00d7 ' + (page.h * s).toFixed(1) +
       ' in on the page \u2248 ' + ppi + ' PPI';
-    if (ppi < 300) text += ' \u2014 below the 300 PPI print target, lines may look soft in print.';
+    if (ppi < 300) text += ' \u2014 source below 300 PPI; PDF resamples for print but cannot restore missing details.';
     printCheckEl.textContent = text;
   };
   if (page.w && page.h) { render(); return; }
@@ -3043,6 +3043,7 @@ def build_pdf(pages, ornament=None, marks=True):
 
     page_ids = []
     prepared = []
+    # Leave book images unchanged; resample only the PDF artwork.
     for page in pages:
         kind = page.get("kind") or ("art" if page.get("png") else "blank")
         if kind == "story":
@@ -3053,6 +3054,18 @@ def build_pdf(pages, ornament=None, marks=True):
             prepared.append(("blank", caption))
             continue
         width, height, rgb = png_to_rgb(png)
+        side, top, bottom = 32, 28, (55 if marks else 32)
+        box_w, box_h = 612 - side * 2, 792 - top - bottom
+        fit = min(box_w / width, box_h / height)
+        draw_w, draw_h = width * fit, height * fit
+        source_ppi = width / (draw_w / 72)
+        if HAS_PIL and source_ppi < 300:
+            new_w = max(width, round(draw_w / 72 * 300))
+            new_h = max(height, round(draw_h / 72 * 300))
+            original = _PILImage.frombytes("RGB", (width, height), rgb)
+            resample = getattr(_PILImage, "Resampling", _PILImage)
+            enlarged = original.resize((new_w, new_h), resample.NEAREST)
+            width, height, rgb = new_w, new_h, enlarged.tobytes()
         mono, _rowbytes = rgb_to_bilevel(rgb, width, height)
         prepared.append(("art", ((width, height, zlib.compress(mono)), caption)))
 
@@ -3110,7 +3123,7 @@ def build_pdf(pages, ornament=None, marks=True):
                 + compressed
                 + b"\nendstream"
             )
-            side, top, bottom = 40, 36, 92
+            side, top, bottom = 32, 28, (55 if marks else 32)
             max_w, max_h = 612 - side * 2, 792 - top - bottom
             scale = min(max_w / width, max_h / height)
             draw_w, draw_h = width * scale, height * scale
