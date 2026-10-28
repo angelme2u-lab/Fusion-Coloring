@@ -220,7 +220,7 @@ HTML = """<!DOCTYPE html>
   .emptystate .es-orn { color:var(--forest); font-size:1.7rem; }
   .emptystate h2 { margin:.5rem 0 .7rem; font-size:1.45rem; }
   .emptystate p { margin:0; opacity:.78; }
-  .sheet { width:min(100%,440px); background:#fff; border:1px solid var(--line); box-shadow:0 8px 24px rgba(26,25,22,.08); padding:1rem 1rem .7rem; }
+  .sheet { width:min(100%,720px); background:#fff; border:1px solid var(--line); box-shadow:0 8px 24px rgba(26,25,22,.08); padding:1rem 1rem .7rem; }
   .sheet img { width:100%; aspect-ratio:2/3; object-fit:contain; display:block; background:#fff; }
   .caption { margin-top:.55rem; font-size:.85rem; text-align:center; line-height:1.35; }
   .folio { margin-top:.15rem; font-size:.75rem; text-align:center; letter-spacing:.08em; }
@@ -324,7 +324,7 @@ HTML = """<!DOCTYPE html>
   .stage { min-width:0; min-height:0; overflow-y:auto; justify-content:flex-start; gap:.65rem; padding:.3rem .4rem 1rem; }
   .selected-page { font-size:.9rem; font-weight:700; color:var(--forest); margin:0; text-align:center; }
   .sheet { flex:none; }
-  .sheet img { aspect-ratio:auto; height:clamp(180px,calc(100vh - 480px),650px); object-fit:contain; }
+  .sheet img { aspect-ratio:auto; width:100%; height:auto; max-height:72vh; object-fit:contain; }
   .caption { max-height:4.1em; overflow-y:auto; }
   .pagepicker { min-height:0; overflow-y:auto; border-left:1px solid var(--line); padding:.3rem .3rem 1rem .8rem; }
   .pagepicker h2 { font-size:.9rem; margin:0 0 .35rem; text-align:center; }
@@ -3579,7 +3579,7 @@ COLORING_STANDARD = (
     "Expressive appealing subjects, natural poses, distinct personality, and believable anatomy. "
     "Crisp confident black outlines on white paper, slightly stronger outer silhouettes and clear object separation. "
     "Purposeful detail and well-defined enclosed spaces that are comfortable to color. "
-    "Keep essential artwork comfortably inside the page edges. "
+    "Use a tall portrait composition with the principal subject and surrounding scene large, occupying at least 85 percent of the image width and height; avoid a small narrow illustration floating in broad empty margins. Keep only a slim unprinted safety border around the edges. " 
     "No color, gray shading, crosshatching, stippling, scratchy fur, woodgrain microtexture, text, labels, or watermark. "
     "Leave coloring areas white; avoid large black filled areas. "
 )
@@ -3626,8 +3626,10 @@ def coloring_prompt(subject, level, characters, has_style_reference=False):
             "line clarity, expressive character treatment, and colorable shapes. "
             "Create the requested scene rather than copying its composition, objects, or lettering. "
             "The audience instructions above override reference complexity across the entire scene. "
-            "Any following input images are CHARACTER IDENTITY references. "
+            "Any following input images are CHARACTER IDENTITY references, not new scene layouts. " 
         )
+    if characters:
+        prompt += ("\nIdentity is the highest priority: use the supplied character reference faces as visual anchors, preserving the shape of the eyes, nose, mouth, jaw, forehead and natural expression; do not substitute a generic beautiful face. If an input reference includes a browser interface, text, borders, or unrelated people, ignore those elements and use only the character portrait itself. Do not reproduce reference photo backgrounds or UI. ")
     prompt += "\nRequested scene: " + subject
     char_lines = []
     for c in characters:
