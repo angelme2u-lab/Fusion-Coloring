@@ -107,6 +107,15 @@ class GenerationTests(unittest.TestCase):
         self.assertIn("Do not substitute similar decorations", prompt)
         self.assertIn("without jewelry or castle", prompt)
 
+    def test_desktop_studio_preview_layout_contract(self):
+        html = app.HTML
+        self.assertIn("Compact desktop controls", html)
+        self.assertIn("grid-template-columns:minmax(240px,.8fr)", html)
+        self.assertIn(".sheet img { max-height:calc(100vh - 245px); }", html)
+        self.assertIn('id="enlargeimage"', html)
+        self.assertIn('id="thumbs"', html)
+        self.assertIn('id="quicksavebook"', html)
+
     def test_cleanup_retains_the_exact_original(self):
         with patch.object(app, "generate_image", return_value=(self.original, None)):
             status, result = self.compose(cleanup=True)
