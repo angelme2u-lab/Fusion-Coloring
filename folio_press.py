@@ -3630,6 +3630,11 @@ def coloring_prompt(subject, level, characters, has_style_reference=False):
         )
     if characters:
         prompt += ("\nIdentity is the highest priority: use the supplied character reference faces as visual anchors, preserving the shape of the eyes, nose, mouth, jaw, forehead and natural expression; do not substitute a generic beautiful face. If an input reference includes a browser interface, text, borders, or unrelated people, ignore those elements and use only the character portrait itself. Do not reproduce reference photo backgrounds or UI. ")
+    prompt += ("\nCreator intent: Treat explicit exclusions in the requested scene as strict constraints. "
+               "Do not add objects, accessories, backgrounds, or anatomy the creator says to omit; "
+               "for example, no jewelry means no pendants, bridles, tiaras, or jeweled ornaments. "
+               "Do not substitute similar decorations for omitted items. "
+               "Preserve the creator's chosen subject, action, and scene before embellishing.")
     prompt += "\nRequested scene: " + subject
     char_lines = []
     for c in characters:
