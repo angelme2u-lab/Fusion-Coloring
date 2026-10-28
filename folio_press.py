@@ -3573,13 +3573,13 @@ def _edits_fields(boundary, prompt, model="gpt-image-2.5-flare"):
             _mp_field(boundary, "quality", "high"))
 
 
-COLORING_PROMPT_VERSION = "2026-10-quality-2"
+COLORING_PROMPT_VERSION = "2026-10-composition-3"
 COLORING_STANDARD = (
     "Create one polished portrait black-and-white coloring-book illustration. "
     "Expressive appealing subjects, natural poses, distinct personality, and believable anatomy. "
     "Crisp confident black outlines on white paper, slightly stronger outer silhouettes and clear object separation. "
-    "Purposeful detail and well-defined enclosed spaces that are comfortable to color. "
-    "Use a tall portrait composition with the principal subject and surrounding scene large, occupying at least 85 percent of the image width and height; avoid a small narrow illustration floating in broad empty margins. Keep only a slim unprinted safety border around the edges. " 
+    "Purposeful detail and well-defined enclosed spaces that are comfortable to color. Interpret the requested action as a visibly different pose and interaction, not another static front-facing portrait. Let the named subject and location determine the composition; avoid defaulting to the same centered bust, symmetrical floral arch, or repeated facial expression for every scene. When a mandala is requested, create a recognizable decorative radial pattern integrated into the artwork, not merely an arch of flowers. "
+    "Compose for a tall portrait page, with a clear focal point and balanced visual weight across the page, avoiding an isolated narrow strip of art or broad accidental blank margins. Use a slim print-safe border. " 
     "No color, gray shading, crosshatching, stippling, scratchy fur, woodgrain microtexture, text, labels, or watermark. "
     "Leave coloring areas white; avoid large black filled areas. "
 )
@@ -3612,7 +3612,7 @@ COLORING_AUDIENCES = {
         "Audience: adults. Sophisticated inviting illustration with rich, balanced, purposeful detail. "
         "Use confident clear outlines and restrained decorative patterns with usable coloring spaces. "
         "Preserve expression, natural proportions, and balanced negative space. "
-        "Apply readable detail to background, plants, fabrics, borders, and subjects without dense microtexture "
+        "Apply readable detail to background, plants, fabrics, borders, and subjects without photorealistic face shading, gray gradients, dense microtexture "
         "or excessively fine lines. Complexity must enrich the scene without crowding it. "
     ),
 }
@@ -3642,7 +3642,7 @@ def coloring_prompt(subject, level, characters, has_style_reference=False):
     if char_lines:
         prompt += ("\nCharacter identities: preserve their recognizable features and clothing, "
                    "rendered as black outline art at the selected audience complexity.\n" + "\n".join(char_lines))
-    prompt += ("\nFinal audience direction: apply the selected audience's scene complexity throughout, "
+    prompt += ("\nFinal audience direction: honor the specific requested action, subject expression, and scene layout while applying the selected audience's scene complexity throughout, "
                "including when the requested scene or reference contains more or less detail. ")
     prompt += COLORING_AUDIENCES[level]
     return prompt
