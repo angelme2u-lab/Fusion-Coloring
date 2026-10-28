@@ -110,8 +110,8 @@ class GenerationTests(unittest.TestCase):
     def test_desktop_studio_preview_layout_contract(self):
         html = app.HTML
         self.assertIn("Compact desktop controls", html)
-        self.assertIn("grid-template-columns:minmax(240px,.8fr)", html)
-        self.assertIn(".sheet img { max-height:calc(100vh - 245px); }", html)
+        self.assertIn("grid-template-columns:minmax(0,1.1fr)", html)
+        self.assertIn(".sheet img { max-height:calc(100vh - 195px); }", html)
         self.assertIn('id="enlargeimage"', html)
         self.assertIn('id="thumbs"', html)
         self.assertIn('id="quicksavebook"', html)

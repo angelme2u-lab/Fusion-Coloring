@@ -373,31 +373,33 @@ HTML = """<!DOCTYPE html>
     .stage { grid-row:3; overflow:visible; padding-top:.8rem; }
     .sheet img { height:auto; max-height:65vh; }
   }
+  .bookfeedback { display:contents; }
   /* Compact desktop controls so the selected artwork is visible immediately. */
   @media (min-width:1001px) {
-    header { display:grid; grid-template-columns:minmax(240px,.8fr) minmax(0,1.4fr);
-      align-items:center; column-gap:1rem; row-gap:.2rem; padding:.4rem 1rem; text-align:left; }
+    header { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);
+      align-items:center; column-gap:1rem; row-gap:.15rem; padding:.2rem 1rem; text-align:left; }
     .masthead { grid-column:1; grid-row:1; justify-content:flex-start; gap:.35rem; }
     .masthead .mandala { width:40px; height:40px; }
     .brand { font-size:1.45rem; letter-spacing:.08em; }
-    .tagline { grid-column:1; grid-row:2; margin:0; font-size:.8rem; }
+    .tagline { display:none; }
     .booktoolbar { grid-column:2; grid-row:1; justify-content:flex-end; margin:0; }
     .booktoolbar button, .booktoolbar a { padding:.35rem .7rem; font-size:.84rem; }
-    .creationbar { grid-column:2; grid-row:2; justify-content:flex-end; margin:0; }
-    .creationbar input { width:min(300px,25vw); }
+    .creationbar { grid-column:1; grid-row:2; justify-content:flex-start; margin:0; }
+    .creationbar input { width:min(260px,22vw); min-width:0; flex:1; }
     .creationbar button { padding:.35rem .65rem; font-size:.83rem; }
-    #creationstatus { grid-column:1; grid-row:3; margin:0; font-size:.74rem; line-height:1.25; }
-    .bookstate { grid-column:2; grid-row:3; display:flex; gap:.55rem; flex-wrap:wrap;
+    .bookfeedback { display:block; grid-column:2; grid-row:2; min-width:0; text-align:right; }
+    #creationstatus { margin:0; font-size:.74rem; line-height:1.25; }
+    .bookstate { display:flex; gap:.55rem; flex-wrap:wrap;
       align-items:baseline; justify-content:flex-end; max-width:none; margin:0;
       font-size:.75rem; line-height:1.25; }
     .bookstate p { margin:0; }
-    #booktoolbarstatus { grid-column:1 / -1; grid-row:4; max-width:none; margin:0;
-      font-size:.74rem; line-height:1.25; text-align:center; }
+    #booktoolbarstatus { max-width:none; margin:0;
+      font-size:.74rem; line-height:1.25; text-align:right; }
     .canvas { padding:0 .65rem .65rem; gap:0 .5rem; }
-    .workbar { padding:.35rem 0; }
+    .workbar { padding:.15rem 0; }
     .stage { padding:.1rem .2rem .6rem; }
     .sheet { width:min(100%,760px); padding:.4rem; }
-    .sheet img { max-height:calc(100vh - 245px); }
+    .sheet img { max-height:calc(100vh - 195px); }
   }
 </style>
 </head>
@@ -417,12 +419,14 @@ HTML = """<!DOCTYPE html>
     <button class="ghost" id="newcreation" type="button">New book</button>
     <button class="ghost" id="savecreation" type="button">Save now</button>
   </div>
+  <div class="bookfeedback">
   <p id="creationstatus" role="status" aria-live="polite">Checking My Creations storage…</p>
   <div class="bookstate" aria-label="Current book and backup status">
     <p id="bookidentity">No book open</p>
     <p id="bookbackupstate" role="status" aria-live="polite">Create pages or open a saved book to begin.</p>
   </div>
   <p class="status" id="booktoolbarstatus" role="status" aria-live="polite">Open a saved .json book here to restore its pictures and settings.</p>
+  </div>
 </header>
 <div class="layout">
   <aside>
