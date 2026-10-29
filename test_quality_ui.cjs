@@ -382,18 +382,83 @@ assert.equal(get('loadfile').clickCount,1, 'Import book backup opens the file pi
   assert.match(get('creationsmessage').textContent,/Could not restore/);
   assert.equal(run('book.length'),originalBookLength+1);
 
-  // Version 3 adds only the missing favorites store, preserving all version 2 stores.
+  // Inspect the actual database version, then add only missing stores.
   const existingStores=new Set(['books','documents','assets']), addedStores=[];
+  db.version=2;db.close=()=>{};
   db.objectStoreNames={contains:name=>existingStores.has(name)};
   db.createObjectStore=(name,options)=>{assert.equal(options.keyPath,'id');addedStores.push(name);existingStores.add(name);};
+  const versions=[];
   context.window.indexedDB={open(name,version){
-    assert.equal(name,'fusion-coloring-creations');assert.equal(version,3);
-    const request={result:db};queueMicrotask(()=>{request.onupgradeneeded();request.onsuccess();});return request;
+    assert.equal(name,'fusion-coloring-creations');versions.push(version);
+    const request={result:db};queueMicrotask(()=>{if(version!==undefined){db.version=version;request.onupgradeneeded();}request.onsuccess();});return request;
   }};
-  await run('initCreations()');
+  run('creationsReady=false;creationsDb=null');
+  assert.equal(await run('initCreations()'),true);
+  assert.deepEqual(versions,[undefined,3]);
   assert.deepEqual(addedStores,['favorites']);
   assert.equal(db.books.size,storedBooksBefore);
   assert.equal(db.favorites.size,1);
+
+  // A newer existing database is opened without a hard-coded downgrade request.
+  db.version=9;versions.length=0;
+  run('creationsReady=false;creationsDb=null');
+  assert.equal(await run('initCreations()'),true);
+  assert.deepEqual(versions,[undefined]);
+  assert.equal(db.version,9);
+
+  // Startup failure is recoverable with Save now; never ask to switch books or reload.
+  let openFailure=true, openCalls=0, confirmCalls=0;
+  run("book[book.length-1].caption='Pending while storage is disconnected'");
+  context.confirm=()=>{confirmCalls++;return false;};
+  context.window.indexedDB={open(name,version){
+    assert.equal(version,undefined);openCalls++;
+    const request={result:db,error:Object.assign(new Error('Connection lost'),{name:'UnknownError'})};
+    queueMicrotask(()=>openFailure?request.onerror():request.onsuccess());return request;
+  }};
+  run('creationsReady=false;creationsDb=null');
+  assert.equal(await run('initCreations()'),false);
+  assert.match(get('creationstatus').textContent,/UnknownError.*Connection lost/);
+  await get('savecreation').onclick();
+  assert.equal(confirmCalls,0,'Save now must not show a switch-book confirmation');
+  assert.equal(run('book.length'),originalBookLength+1);
+  openFailure=false;
+  await get('savecreation').onclick();
+  assert.equal(run('creationsReady'),true);
+  assert.equal(run('creationId'),originalBookId);
+  assert.match(get('creationstatus').textContent,/Saved in My Creations/);
+  assert.equal(db.books.size,storedBooksBefore);
+
+  // Failed gallery reads stay errors, even after a search or tab change.
+  openFailure=true;run('creationsReady=false;creationsDb=null');
+  await run('showCreations()');
+  assert.match(get('creationsmessage').textContent,/Could not read My Books/);
+  get('creationsearch').value='fusion';get('creationsearch').oninput();
+  get('showbooks').onclick();
+  assert.match(get('creationsmessage').textContent,/UnknownError.*Connection lost/);
+  assert.doesNotMatch(get('creationsmessage').textContent,/No saved books|No matches/);
+  assert.equal(get('retrystorage').hidden,false);
+  openFailure=false;
+  await get('retrystorage').onclick();
+  assert.equal(get('creationgrid').children.length,storedBooksBefore);
+  assert.equal(get('retrystorage').hidden,true);
+  const callsBeforeClose=openCalls;
+  db.onclose();
+  assert.equal(run('creationsReady'),false);
+  await get('savecreation').onclick();
+  assert.equal(openCalls,callsBeforeClose+1);
+  assert.equal(run('creationsReady'),true);
+
+  // A timed-out open closes late connections so retries cannot block upgrades.
+  const savedTimer=context.setTimeout;
+  let connectionTimeout, lateRequest, lateClosed=0;
+  context.setTimeout=fn=>{connectionTimeout=fn;return 1;};
+  context.window.indexedDB={open(){lateRequest={result:{close(){lateClosed++;}}};return lateRequest;}};
+  const opening=run('openCreationsDatabase()');
+  lateRequest.onblocked();connectionTimeout();
+  await assert.rejects(opening,/Browser storage did not respond/);
+  lateRequest.onsuccess();assert.equal(lateClosed,1);
+  context.setTimeout=savedTimer;
+  console.log('PASS: version-safe storage, missing-store upgrade, startup retry, Save now without confirmation, persistent gallery errors, reconnect and late-connection cleanup');
   console.log('PASS: favorite isolation, duplicate saves, failure recovery, book/favorite filtering, prompt details, colored companions, backup restore and reuse');
   console.log('PASS: deduplicated artwork, metadata-only renames, hydrated originals/references, password-manager key isolation and storage timeout');
 

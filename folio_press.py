@@ -756,6 +756,7 @@ HTML = """<!DOCTYPE html>
       <button id="showbooks" type="button" aria-pressed="true">My Books</button>
       <button id="showfavorites" type="button" aria-pressed="false">My Favorites Gallery</button>
       <button id="importbookbackup" type="button">Import book backup</button>
+      <button id="retrystorage" type="button" hidden>Retry storage connection</button>
     </div>
     <label class="creationsearch" id="favoriteimportlabel" hidden>Restore a favorite backup<input id="favoriteimport" type="file" accept=".json,application/json"></label>
     <div class="creationsearch"><label for="creationsearch" id="creationsearchlabel">Find a book by name</label><input id="creationsearch" type="search" placeholder="Search your books"></div>
@@ -855,6 +856,7 @@ let creationTimer = null, creationSaving = null, creationList = [], creationCove
 let creationAssetCache = new Map();
 let creationGalleryMode = 'books';
 let imageViewerReturnFocus = null;
+let creationConnecting = null, creationStorageError = '', creationGalleryState = 'idle';
 
 // Compare small field snapshots, keeping image strings by reference. Never
 // stringify all image data during navigation just to display save status.
@@ -1644,7 +1646,7 @@ loadFile.onchange = () => {
     try {
       const data = JSON.parse(reader.result);
       if (!Array.isArray(Array.isArray(data) ? data : data.pages)) throw new Error('bad book file');
-      if (!(await flushCreationSave())) throw new Error('Save current book before switching');
+      if (!(await saveBeforeSwitch())) throw new Error('Save current book before switching');
       restoringCreation = true;
       restoreBookDocument(data);
       resetCreationIdentity(data.title || (f.name ? f.name.replace(/\\.json$/i, '') : 'Imported book'));
@@ -2660,7 +2662,8 @@ async function creationThumbnail(image) {
 async function flushCreationSave(attempt = 0) {
   clearTimeout(creationTimer);
   if (restoringCreation) return true;
-  if (!creationsReady) return !book.length || confirm('My Creations storage is unavailable. Keep a downloaded backup before switching books. Continue?');
+  if (!book.length && !creationId) return true;
+  if (!creationsReady && !(await initCreations())) return false;
   if (creationSaving) {
     const ok = await creationSaving;
     return ok ? flushCreationSave(attempt) : false;
@@ -2694,7 +2697,9 @@ async function flushCreationSave(attempt = 0) {
         'Saved in My Creations in this browser at ' + new Date(meta.updatedAt).toLocaleTimeString() + '.');
       return true;
     } catch (error) {
-      creationStatus('My Creations could not finish saving. Your pages are still here. Use Save book backup, then try Save now again.');
+      if (['InvalidStateError','UnknownError'].includes(error.name)) { creationsReady = false; try { creationsDb?.close(); } catch (_) {} creationsDb = null; }
+      creationStorageError = storageErrorText(error);
+      creationStatus('My Creations could not finish saving. ' + creationStorageError + ' Your pages are still here. Keep a book backup, then try Save now again.');
       return false;
     }
   })();
@@ -2706,6 +2711,10 @@ async function flushCreationSave(attempt = 0) {
     return false;
   }
   return ok;
+}
+async function saveBeforeSwitch() {
+  if (await flushCreationSave()) return true;
+  return !creationsReady && confirm('This book could not save to My Books. Only continue if you have a downloaded backup of these pages. Switch books?');
 }
 async function readCreation(id, metadataStore = 'books') {
   const tx = creationsDb.transaction([metadataStore,'documents'], 'readonly');
@@ -2907,6 +2916,13 @@ function renderCreationGallery() {
   document.getElementById('creationsearchlabel').textContent = favorites ? 'Find a favorite by name or subject' : 'Find a book by name';
   document.getElementById('creationsearch').placeholder = favorites ? 'Search your favorites' : 'Search your books';
   document.getElementById('favoriteimportlabel').hidden = !favorites;
+  document.getElementById('retrystorage').hidden = creationsReady && creationGalleryState !== 'error';
+  if (creationGalleryState !== 'ready') {
+    document.getElementById('creationsmessage').textContent = creationGalleryState === 'error'
+      ? 'Could not read My Books. ' + creationStorageError + ' Use Retry storage connection. Your downloaded backups can still be imported.'
+      : 'Connecting to your saved books…';
+    return;
+  }
   const matches = creationList.filter(b => (b.kind === 'favorite') === favorites &&
     (b.name + ' ' + (favorites ? b.searchText || '' : '')).toLocaleLowerCase().includes(query));
   document.getElementById('creationsmessage').textContent = matches.length
@@ -2925,22 +2941,25 @@ function renderCreationGallery() {
   }
 }
 async function loadCreationGallery() {
-  if (!creationsReady) throw new Error('Storage unavailable');
-  const tx = creationsDb.transaction(['books','favorites'],'readonly');
-  const groups = await Promise.all(['books','favorites'].map(name => requestResult(tx.objectStore(name).getAll())));
-  creationList = groups.flat();
-  creationList.sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
-  renderCreationGallery();
+  try {
+    if (!creationsReady) throw new Error(creationStorageError || 'Storage unavailable');
+    const tx = creationsDb.transaction(['books','favorites'],'readonly');
+    const groups = await Promise.all(['books','favorites'].map(name => requestResult(tx.objectStore(name).getAll())));
+    creationList = groups.flat();
+    creationList.sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
+    creationGalleryState = 'ready'; renderCreationGallery();
+  } catch (error) { creationGalleryState = 'error'; creationStorageError = storageErrorText(error); renderCreationGallery(); throw error; }
 }
 async function showCreations() {
   document.getElementById('creationsmodal').hidden = false;
   document.getElementById('creationsclose').focus();
-  document.getElementById('creationsmessage').textContent = 'Opening your saved books…';
+  creationGalleryState = 'loading'; renderCreationGallery();
   try {
+    if (!creationsReady && !(await initCreations())) throw new Error(creationStorageError);
     const saved = await flushCreationSave();
     await loadCreationGallery();
     if (!saved) document.getElementById('creationsmessage').textContent = 'Your current changes are not saved yet. Keep a downloaded backup. Previously saved books are shown below.';
-  } catch (_) { document.getElementById('creationsmessage').textContent = 'My Creations storage is unavailable in this browser. Your downloaded book backups can still be opened.'; }
+  } catch (error) { creationGalleryState = 'error'; creationStorageError = storageErrorText(error); renderCreationGallery(); }
 }
 function closeCreations() {
   document.getElementById('creationsmodal').hidden = true;
@@ -2952,6 +2971,16 @@ document.getElementById('creationsearch').oninput = renderCreationGallery;
 document.getElementById('showbooks').onclick = () => { creationGalleryMode = 'books'; document.getElementById('creationsearch').value = ''; renderCreationGallery(); };
 document.getElementById('showfavorites').onclick = () => { creationGalleryMode = 'favorites'; document.getElementById('creationsearch').value = ''; renderCreationGallery(); };
 document.getElementById('importbookbackup').onclick = () => { closeCreations(); loadFile.click(); };
+document.getElementById('retrystorage').onclick = async () => {
+  const button = document.getElementById('retrystorage'); button.disabled = true;
+  try {
+    if (!creationsReady && !(await initCreations())) { creationGalleryState = 'error'; renderCreationGallery(); return; }
+    const saved = await flushCreationSave();
+    await loadCreationGallery();
+    if (!saved) document.getElementById('creationsmessage').textContent = 'Saved books are shown below, but your open book could not save. Keep a downloaded backup.';
+  } catch (_) { creationGalleryState = 'error'; renderCreationGallery(); }
+  finally { button.disabled = false; }
+};
 document.getElementById('favoriteimport').onchange = async event => {
   const input = event.target, file = input.files[0], message = document.getElementById('creationsmessage');
   if (!file) return;
@@ -2974,7 +3003,7 @@ document.getElementById('savecreation').onclick = async () => {
   await flushCreationSave();
 };
 document.getElementById('newcreation').onclick = async () => {
-  if (!(await flushCreationSave())) return;
+  if (!(await saveBeforeSwitch())) return;
   restoringCreation = true;
   restoreBookDocument({pages:[], characters, marks:true});
   resetCreationIdentity('Untitled book');
@@ -2989,7 +3018,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') { event.preventDefault(); closeCreations(); }
   if (event.key === 'Tab') {
     const controls = [document.getElementById('creationsclose'), document.getElementById('showbooks'),
-      document.getElementById('showfavorites'), document.getElementById('importbookbackup'), document.getElementById('creationsearch'),
+      document.getElementById('showfavorites'), document.getElementById('importbookbackup'), document.getElementById('retrystorage'), document.getElementById('creationsearch'),
       ...document.querySelectorAll('#favoriteimport'),
       ...document.querySelectorAll('#creationgrid button, #creationgrid input, #creationgrid summary')].filter(el => !el.disabled && el.getClientRects().length);
     const index = controls.indexOf(document.activeElement);
@@ -2999,27 +3028,80 @@ document.addEventListener('keydown', event => {
 window.addEventListener('beforeunload', event => {
   if (book.length && creationDirty()) { event.preventDefault(); event.returnValue = ''; }
 });
-async function initCreations() {
-  let storageBlocked = false;
-  try {
-    if (!window.indexedDB) throw new Error('Unavailable');
-    const request = window.indexedDB.open('fusion-coloring-creations',3);
+function storageErrorText(error) {
+  const name = error?.name || 'Error';
+  if (name === 'StorageBlockedError') return 'An older Fusion Coloring tab is blocking storage. Save its work and close that older tab, then retry here.';
+  if (name === 'QuotaExceededError') return 'Browser storage is full (QuotaExceededError).';
+  return name + ': ' + String(error?.message || 'Browser storage is unavailable').slice(0,240);
+}
+const CREATION_STORES = ['books','documents','assets','favorites'];
+function openCreationsDatabase(version) {
+  return new Promise((resolve,reject) => {
+    const request = version === undefined
+      ? window.indexedDB.open('fusion-coloring-creations')
+      : window.indexedDB.open('fusion-coloring-creations',version);
+    let settled = false, blocked = false;
+    const fail = error => { if (settled) return; settled = true; clearTimeout(timer); reject(error); };
+    const timer = setTimeout(() => {
+      const error = new Error('Browser storage did not respond. Retry the connection; keep your book backup.');
+      error.name = blocked ? 'StorageBlockedError' : 'StorageTimeoutError'; fail(error);
+    },15000);
     request.onupgradeneeded = () => {
-      for (const name of ['books','documents','assets','favorites']) {
-        if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name,{keyPath:'id'});
-      }
+      try {
+        for (const name of CREATION_STORES) {
+          if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name,{keyPath:'id'});
+        }
+      } catch (error) { try { request.transaction.abort(); } catch (_) {} fail(error); }
     };
     request.onblocked = () => {
-      storageBlocked = true;
-      creationStatus('Another Fusion Coloring tab is blocking My Books. Save any open work there, then close older Fusion Coloring tabs.');
+      blocked = true;
+      creationStatus('An older Fusion Coloring tab is blocking My Books. Save its work and close that tab, then retry here.');
     };
-    creationsDb = await requestResult(request); creationsReady = true;
-    creationsDb.onversionchange = () => { creationsDb.close(); creationsReady = false; creationStatus('Storage updated in another tab. Save a backup, then reopen this app.'); };
-    creationStatus('My Creations ready — saves stay in this browser on this device.');
-    scheduleCreationSave();
-  } catch (_) { creationStatus(storageBlocked
-    ? 'My Books is waiting for older Fusion Coloring tabs to close. Keep a book backup, close those tabs, then reload this tab. Do not clear website data.'
-    : 'Automatic saving is unavailable in this browser. Use Save book backup to keep your work.'); }
+    request.onerror = () => fail(request.error || new Error('Could not connect to browser storage'));
+    request.onsuccess = () => {
+      // A late connection after timeout must not stay open and block a later retry.
+      if (settled) { request.result.close(); return; }
+      settled = true; clearTimeout(timer); resolve(request.result);
+    };
+  });
+}
+async function initCreations() {
+  if (creationsReady && creationsDb) return true;
+  if (creationConnecting) return creationConnecting;
+  creationConnecting = (async () => {
+    try {
+      if (!window.indexedDB) throw new Error('This browser did not provide IndexedDB storage');
+      let db;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        // Open the actual existing version first. Never try to downgrade or recreate it.
+        db = await openCreationsDatabase();
+        if (CREATION_STORES.every(name => db.objectStoreNames.contains(name))) break;
+        const nextVersion = db.version + 1; db.close();
+        try { db = await openCreationsDatabase(nextVersion); break; }
+        catch (error) { if (error.name !== 'VersionError' || attempt) throw error; }
+      }
+      if (!db || !CREATION_STORES.every(name => db.objectStoreNames.contains(name))) {
+        db?.close(); throw new Error('Saved-book storage is missing a required section');
+      }
+      creationsDb = db; creationsReady = true; creationStorageError = '';
+      const disconnected = () => {
+        if (creationsDb !== db) return;
+        creationsDb = null; creationsReady = false;
+        creationStorageError = 'The browser closed the storage connection. Use Save now to reconnect without reloading.';
+        creationStatus(creationStorageError);
+      };
+      db.onversionchange = () => { db.close(); disconnected(); };
+      db.onclose = disconnected;
+      creationStatus('My Creations ready — saves stay in this browser on this device.');
+      scheduleCreationSave(); return true;
+    } catch (error) {
+      creationsReady = false; creationStorageError = storageErrorText(error);
+      creationStatus('Automatic saving could not connect. ' + creationStorageError + ' Keep a book backup. Save now retries without replacing your open pages.');
+      return false;
+    }
+  })();
+  try { return await creationConnecting; }
+  finally { creationConnecting = null; }
 }
 
 loadCharacters();
