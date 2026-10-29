@@ -359,11 +359,20 @@ HTML = """<!DOCTYPE html>
   .creationsearch { padding:.6rem 1rem; }
   .creationsearch input { padding:.5rem .7rem; }
   .creationgrid { overflow-y:auto; padding:1rem; display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:1rem; }
+  .creationgrid.favorites { grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr)); }
   .creationcard { border:1px solid var(--line); border-radius:8px; background:#fff; padding:.7rem; min-width:0; }
   .creationcard img { width:100%; height:160px; object-fit:contain; background:#fafafa; }
   .creationcard h3 { font-size:1rem; margin:.4rem 0; overflow-wrap:anywhere; }
   .creationcard p { font-size:.8rem; margin:.3rem 0; }
   .creationcard button { border-radius:6px; font-size:.9rem; }
+  .creationtabs { display:flex; gap:.5rem; padding:0 1rem; flex-wrap:wrap; }
+  .creationtabs button { width:auto; padding:.5rem 1rem; }
+  .creationtabs button[aria-pressed="false"] { background:transparent; color:var(--forest); border:1px solid var(--forest); }
+  .creationcard details { font-size:.85rem; margin:.5rem 0; }
+  .creationcard details p { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .creationcard .favoritepreview { background:white; border:1px solid var(--line); padding:0; }
+  .favoriteupload { font-size:.8rem; margin-top:.6rem; }
+  .favoriteupload input { padding:.4rem; font-size:.8rem; }
   @media (max-width:800px) {
     .layout { grid-template-columns:minmax(0,1fr); }
     .canvas { grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto auto; overflow:visible; scroll-margin-top:.5rem; }
@@ -727,6 +736,8 @@ HTML = """<!DOCTYPE html>
       <button class="ghost" id="editart" hidden>Change only this…</button>
       <button class="ghost" id="strlines" hidden>Strengthen lines…</button>
       <button class="ghost" id="dlimage" hidden>Download this image</button>
+      <button class="ghost" id="savefavorite" hidden>Save to My Favorites Gallery</button>
+      <p id="favoritestatus" class="status" role="status" aria-live="polite"></p>
     </div>
     </div>
     <nav class="pagepicker" aria-label="Book pages">
@@ -740,7 +751,12 @@ HTML = """<!DOCTYPE html>
   <div class="viewerbox creationsbox">
     <div class="viewertools"><h2 id="creationstitle">My Creations</h2><button id="creationsclose" type="button">Back to studio</button></div>
     <p class="viewerhelp">Books save automatically in this browser on this device. Keep downloaded backups too; clearing website data removes these saves.</p>
-    <div class="creationsearch"><label for="creationsearch">Find a book by name</label><input id="creationsearch" type="search" placeholder="Search your books"></div>
+    <div class="creationtabs" role="group" aria-label="Choose gallery">
+      <button id="showbooks" type="button" aria-pressed="true">My Books</button>
+      <button id="showfavorites" type="button" aria-pressed="false">My Favorites Gallery</button>
+    </div>
+    <label class="creationsearch" id="favoriteimportlabel" hidden>Restore a favorite backup<input id="favoriteimport" type="file" accept=".json,application/json"></label>
+    <div class="creationsearch"><label for="creationsearch" id="creationsearchlabel">Find a book by name</label><input id="creationsearch" type="search" placeholder="Search your books"></div>
     <p class="viewerhelp" id="creationsmessage" role="status" aria-live="polite"></p>
     <div class="creationgrid" id="creationgrid"></div>
   </div>
@@ -835,6 +851,8 @@ let creationsDb = null, creationsReady = false, restoringCreation = false;
 let creationId = null, creationRevision = 0, creationCheckpoint = null, savedCreationName = '';
 let creationTimer = null, creationSaving = null, creationList = [], creationCoverSource = '', creationCover = '';
 let creationAssetCache = new Map();
+let creationGalleryMode = 'books';
+let imageViewerReturnFocus = null;
 
 // Compare small field snapshots, keeping image strings by reference. Never
 // stringify all image data during navigation just to display save status.
@@ -1033,6 +1051,8 @@ function show(i) {
   document.getElementById('editart').hidden = !(page && page.kind === 'art' && page.image);
   document.getElementById('strlines').hidden = !(page && page.kind === 'art' && page.image);
   document.getElementById('dlimage').hidden = !(page && page.kind === 'art' && page.image);
+  document.getElementById('savefavorite').hidden = !(page && page.kind === 'art' && page.image);
+  document.getElementById('favoritestatus').textContent = '';
   if (page && page.kind === 'story') {
     sheet.hidden = true;
     sview.hidden = false;
@@ -1189,9 +1209,11 @@ function setImageViewerZoom(value) {
 function closeImageViewer() {
   document.getElementById('imageviewer').hidden = true;
   document.getElementById('viewerimage').removeAttribute('src');
-  document.getElementById('enlargeimage').focus();
+  (imageViewerReturnFocus || document.getElementById('enlargeimage')).focus();
+  imageViewerReturnFocus = null;
 }
 document.getElementById('enlargeimage').onclick = () => {
+  imageViewerReturnFocus = document.getElementById('enlargeimage');
   const page = book[current];
   if (!page || page.kind !== 'art' || !page.image) return;
   const image = document.getElementById('viewerimage');
@@ -2566,8 +2588,8 @@ function requestResult(request, timeoutMs = 15000) {
     request.onerror = () => { clearTimeout(timer); reject(request.error || new Error('Storage unavailable')); };
   });
 }
-function prepareCreationDocument(data) {
-  const cache = new Map(creationAssetCache), assets = [];
+function prepareCreationDocument(data, baseCache = creationAssetCache) {
+  const cache = new Map(baseCache), assets = [];
   const visit = value => {
     if (typeof value === 'string' && value.length > 4096) {
       let id = cache.get(value);
@@ -2582,14 +2604,15 @@ function prepareCreationDocument(data) {
 }
 function writeCreation(meta, prepared, expectedRevision) {
   return new Promise((resolve,reject) => {
-    const tx = creationsDb.transaction(['books','documents','assets'], 'readwrite');
+    const metadataStore = meta.kind === 'favorite' ? 'favorites' : 'books';
+    const tx = creationsDb.transaction([metadataStore,'documents','assets'], 'readwrite');
     let reason = null;
     const timer = setTimeout(() => {
       reason = new Error('Browser storage did not finish saving in time');
       try { tx.abort(); } catch (_) {}
       reject(reason);
     }, 15000);
-    const store = tx.objectStore('books');
+    const store = tx.objectStore(metadataStore);
     const check = store.get(meta.id);
     check.onsuccess = () => {
       if ((check.result ? check.result.revision : 0) !== expectedRevision) {
@@ -2678,9 +2701,9 @@ async function flushCreationSave(attempt = 0) {
   }
   return ok;
 }
-async function readCreation(id) {
-  const tx = creationsDb.transaction(['books','documents'], 'readonly');
-  const values = await Promise.all([requestResult(tx.objectStore('books').get(id)), requestResult(tx.objectStore('documents').get(id))]);
+async function readCreation(id, metadataStore = 'books') {
+  const tx = creationsDb.transaction([metadataStore,'documents'], 'readonly');
+  const values = await Promise.all([requestResult(tx.objectStore(metadataStore).get(id)), requestResult(tx.objectStore('documents').get(id))]);
   if (!values[0] || !values[1]) throw new Error('Book unavailable');
   const record = values[1], cache = new Map();
   if (record.storage_format !== 'assets-v1') return {meta:values[0],data:record.data,cache};
@@ -2716,6 +2739,7 @@ async function openCreation(id) {
   try {
     if (!(await flushCreationSave())) return;
     const {meta,data,cache} = await readCreation(id);
+    if (meta.kind === 'favorite') throw new Error('Use Add to open book for favorites');
     restoringCreation = true;
     restoreBookDocument(data);
     creationId = meta.id; creationRevision = meta.revision;
@@ -2733,15 +2757,158 @@ async function openCreation(id) {
     document.getElementById('creationsmessage').textContent = 'Could not reopen that book. Your current book remains available; try your downloaded backup.';
   } finally { restoringCreation = false; }
 }
+// Favorites have separate metadata so older tabs cannot mistake one for a saved book.
+// The existing atomic document/asset format keeps each outline and its versions together.
+// Content-derived IDs make repeated saves safe across tabs without overwriting a favorite.
+async function saveFavoriteDocument(data) {
+  if (!creationsReady) throw new Error('Storage unavailable');
+  const page = data.pages[0];
+  const digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({...page,w:undefined,h:undefined})));
+  const id = 'favorite-' + Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,'0')).join('');
+  const meta = {id, kind:'favorite', name:(page.caption || data.title || 'Favorite illustration').slice(0,100),
+    count:1, revision:1, cover:await creationThumbnail(page.image), updatedAt:new Date().toISOString(),
+    sourceBook:data.favorite.sourceBook || '', searchText:(page.caption || '') + ' ' + (page.generation?.subject || '')};
+  const prepared = prepareCreationDocument(data);
+  try { await writeCreation(meta,prepared,0); }
+  catch (error) { if (error.conflict) return {id,existing:true}; throw error; }
+  return {id,existing:false};
+}
+document.getElementById('savefavorite').onclick = async () => {
+  const page = book[current];
+  if (!page || page.kind !== 'art' || !page.image) return;
+  const button = document.getElementById('savefavorite'), status = document.getElementById('favoritestatus');
+  button.disabled = true; status.textContent = 'Saving favorite…';
+  // Capture before any asynchronous work so navigation cannot change what gets saved.
+  const data = JSON.parse(JSON.stringify({...bookDocument(), pages:[page],
+    favorite:{sourceBook:creationName(),sourcePage:current + 1,coloredVersions:[]}}));
+  try {
+    const result = await saveFavoriteDocument(data);
+    status.textContent = result.existing ? 'Already saved in My Favorites Gallery.' : 'Saved to My Favorites Gallery. Your book is unchanged.';
+  } catch (_) { status.textContent = 'Could not save this favorite. Your artwork is still in the book; keep a downloaded backup and try again.'; }
+  finally { button.disabled = false; }
+};
+function favoriteDownload(content, filename, type) {
+  const url = URL.createObjectURL(new Blob([content],{type}));
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url),60000);
+}
+function favoriteImageDownload(image, filename, mime = 'image/png') {
+  const a = document.createElement('a'); a.href = 'data:' + mime + ';base64,' + image;
+  a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+}
+async function favoriteAction(id, action) {
+  const message = document.getElementById('creationsmessage');
+  try {
+    const {meta,data} = await readCreation(id,'favorites');
+    if (meta.kind !== 'favorite' || !data.pages?.[0]?.image) throw new Error('Favorite unavailable');
+    const page = data.pages[0];
+    if (action === 'add') {
+      if (!(await flushCreationSave())) { message.textContent = 'Save your current book or download a backup before adding this favorite.'; return; }
+      // Detached copy: editing the book must never change the saved favorite.
+      book.push(JSON.parse(JSON.stringify(page)));
+      renderCount(); renderThumbs(); selectBookPage(book.length - 1);
+      const saved = await flushCreationSave();
+      closeCreations();
+      document.getElementById('favoritestatus').textContent = saved
+        ? 'Favorite added to this book and saved. The gallery copy is unchanged.'
+        : 'Favorite added in this tab, but the book could not save. Download a book backup now.';
+    } else if (action === 'image') favoriteImageDownload(page.image,'fusion-favorite.png');
+    else if (action === 'original') favoriteImageDownload(page.original_image,'fusion-favorite-original.png');
+    else if (action === 'backup') favoriteDownload(JSON.stringify(data),'fusion-favorite.json','application/json');
+    else if (action === 'preview') {
+      imageViewerReturnFocus = document.activeElement;
+      document.getElementById('viewerimage').src = 'data:image/png;base64,' + page.image;
+      document.getElementById('viewerimage').alt = meta.name;
+      document.getElementById('viewertitle').textContent = meta.name;
+      document.getElementById('imageviewer').hidden = false;
+      setImageViewerZoom(1); document.getElementById('viewerclose').focus();
+    }
+  } catch (_) { message.textContent = 'Could not open that favorite. Your saved books and artwork have not been replaced. Try again.'; }
+}
+async function attachFavoriteColor(id, file) {
+  const message = document.getElementById('creationsmessage');
+  if (!file) return;
+  if (!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size > 30 * 1024 * 1024) {
+    message.textContent = 'Choose a PNG, JPEG, or WebP image smaller than 30 MB.'; return;
+  }
+  message.textContent = 'Saving colored companion…';
+  try {
+    const encoded = await new Promise((resolve,reject) => {
+      const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file);
+    });
+    const image = await new Promise((resolve,reject) => {
+      const img = new Image(); img.onload = () => resolve(encoded.split(',')[1]); img.onerror = reject; img.src = encoded;
+    });
+    const {meta,data,cache} = await readCreation(id,'favorites');
+    if (meta.kind !== 'favorite') throw new Error('Favorite unavailable');
+    data.favorite.coloredVersions = data.favorite.coloredVersions || [];
+    if (!data.favorite.coloredVersions.some(v => v.image === image)) {
+      data.favorite.coloredVersions.push({name:file.name, image, mime:file.type});
+      const prepared = prepareCreationDocument(data,cache);
+      await writeCreation({...meta,revision:meta.revision + 1,updatedAt:new Date().toISOString()},prepared,meta.revision);
+    }
+    await loadCreationGallery();
+    message.textContent = 'Colored companion saved with the outline. Original artwork preserved.';
+  } catch (_) { message.textContent = 'Could not save the colored companion. The outline and existing versions are unchanged; try again.'; }
+}
+function renderFavoriteCard(item, card) {
+  const addButton = (text, action) => {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = text;
+    b.setAttribute('aria-label',text + ': ' + item.name); b.onclick = () => favoriteAction(item.id,action); card.appendChild(b);
+  };
+  if (item.cover) {
+    const preview = document.createElement('button'); preview.type = 'button'; preview.className = 'favoritepreview';
+    preview.setAttribute('aria-label','Enlarge favorite: ' + item.name);
+    const img = document.createElement('img'); img.src = item.cover; img.alt = ''; preview.appendChild(img);
+    preview.onclick = () => favoriteAction(item.id,'preview'); card.appendChild(preview);
+  }
+  const title = document.createElement('h3'); title.textContent = item.name; card.appendChild(title);
+  const source = document.createElement('p'); source.textContent = item.sourceBook ? 'From ' + item.sourceBook : 'Saved illustration'; card.appendChild(source);
+  addButton('Add to open book','add'); addButton('Download image','image'); addButton('Download favorite backup','backup');
+  const details = document.createElement('details'), summary = document.createElement('summary');
+  summary.textContent = 'Prompt, settings & versions'; details.appendChild(summary); card.appendChild(details);
+  let loaded = false;
+  details.ontoggle = async () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+    try {
+      const {data} = await readCreation(item.id,'favorites'), page = data.pages[0], g = page.generation;
+      const prompt = document.createElement('p'); prompt.textContent = g?.prompt || page.caption || 'No prompt recorded for this image.'; details.appendChild(prompt);
+      const settings = document.createElement('p'); settings.textContent = g
+        ? ['Model: ' + (g.model || 'not recorded'),'Audience: ' + ({easy:'Children',medium:'Teens',detailed:'Adults'}[g.level] || g.level || 'not recorded'),'Quality: ' + (g.quality || 'not recorded'),g.cleanup ? 'Gray removal on' : 'Original linework',page.line_treatment ? 'Lines strengthened: ' + page.line_treatment.mode : ''].filter(Boolean).join(' · ')
+        : 'Generation settings were not recorded for this image.'; details.appendChild(settings);
+      if (page.original_image) addButton('Download original','original');
+      for (const version of data.favorite?.coloredVersions || []) {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Download colored: ' + version.name;
+        b.onclick = () => favoriteImageDownload(version.image,version.name,version.mime); details.appendChild(b);
+        const img = document.createElement('img'); img.src = 'data:' + version.mime + ';base64,' + version.image; img.alt = version.name; details.appendChild(img);
+      }
+    } catch (_) { loaded = false; const p = document.createElement('p'); p.textContent = 'Details could not load. Close and reopen to retry.'; details.appendChild(p); }
+  };
+  const label = document.createElement('label'); label.className = 'favoriteupload'; label.textContent = 'Add colored companion';
+  const upload = document.createElement('input'); upload.type = 'file'; upload.accept = 'image/png,image/jpeg,image/webp';
+  upload.onchange = async () => { upload.disabled = true; await attachFavoriteColor(item.id,upload.files[0]); upload.value = ''; upload.disabled = false; };
+  label.appendChild(upload); card.appendChild(label);
+}
 function renderCreationGallery() {
   const grid = document.getElementById('creationgrid'); grid.innerHTML = '';
   const query = document.getElementById('creationsearch').value.trim().toLocaleLowerCase();
-  const matches = creationList.filter(b => b.name.toLocaleLowerCase().includes(query));
+  const favorites = creationGalleryMode === 'favorites';
+  grid.classList.toggle('favorites',favorites);
+  document.getElementById('showbooks').setAttribute('aria-pressed',String(!favorites));
+  document.getElementById('showfavorites').setAttribute('aria-pressed',String(favorites));
+  document.getElementById('creationsearchlabel').textContent = favorites ? 'Find a favorite by name or subject' : 'Find a book by name';
+  document.getElementById('creationsearch').placeholder = favorites ? 'Search your favorites' : 'Search your books';
+  document.getElementById('favoriteimportlabel').hidden = !favorites;
+  const matches = creationList.filter(b => (b.kind === 'favorite') === favorites &&
+    (b.name + ' ' + (favorites ? b.searchText || '' : '')).toLocaleLowerCase().includes(query));
   document.getElementById('creationsmessage').textContent = matches.length
-    ? matches.length + ' saved book' + (matches.length === 1 ? '' : 's') + ' in this browser.'
-    : query ? 'No matching books.' : 'No saved books yet. Create a page or open a book backup to begin.';
+    ? matches.length + (favorites ? ' favorite' : ' saved book') + (matches.length === 1 ? '' : 's') + ' in this browser.'
+    : query ? 'No matches.' : favorites ? 'No favorites yet. Select an illustration in the studio and choose Save to My Favorites Gallery.' : 'No saved books yet. Create a page or open a book backup to begin.';
   for (const item of matches) {
     const card = document.createElement('article'); card.className = 'creationcard';
+    if (favorites) { renderFavoriteCard(item,card); grid.appendChild(card); continue; }
     if (item.cover) { const img = document.createElement('img'); img.src = item.cover; img.alt = ''; card.appendChild(img); }
     const title = document.createElement('h3'); title.textContent = item.name; card.appendChild(title);
     const info = document.createElement('p');
@@ -2751,16 +2918,21 @@ function renderCreationGallery() {
     grid.appendChild(card);
   }
 }
+async function loadCreationGallery() {
+  if (!creationsReady) throw new Error('Storage unavailable');
+  const tx = creationsDb.transaction(['books','favorites'],'readonly');
+  const groups = await Promise.all(['books','favorites'].map(name => requestResult(tx.objectStore(name).getAll())));
+  creationList = groups.flat();
+  creationList.sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
+  renderCreationGallery();
+}
 async function showCreations() {
   document.getElementById('creationsmodal').hidden = false;
   document.getElementById('creationsclose').focus();
   document.getElementById('creationsmessage').textContent = 'Opening your saved books…';
   try {
     const saved = await flushCreationSave();
-    if (!creationsReady) throw new Error('Storage unavailable');
-    creationList = await requestResult(creationsDb.transaction('books','readonly').objectStore('books').getAll());
-    creationList.sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
-    renderCreationGallery();
+    await loadCreationGallery();
     if (!saved) document.getElementById('creationsmessage').textContent = 'Your current changes are not saved yet. Keep a downloaded backup. Previously saved books are shown below.';
   } catch (_) { document.getElementById('creationsmessage').textContent = 'My Creations storage is unavailable in this browser. Your downloaded book backups can still be opened.'; }
 }
@@ -2771,6 +2943,24 @@ function closeCreations() {
 document.getElementById('mycreations').onclick = showCreations;
 document.getElementById('creationsclose').onclick = closeCreations;
 document.getElementById('creationsearch').oninput = renderCreationGallery;
+document.getElementById('showbooks').onclick = () => { creationGalleryMode = 'books'; document.getElementById('creationsearch').value = ''; renderCreationGallery(); };
+document.getElementById('showfavorites').onclick = () => { creationGalleryMode = 'favorites'; document.getElementById('creationsearch').value = ''; renderCreationGallery(); };
+document.getElementById('favoriteimport').onchange = async event => {
+  const input = event.target, file = input.files[0], message = document.getElementById('creationsmessage');
+  if (!file) return;
+  input.disabled = true;
+  try {
+    if (file.size > 100 * 1024 * 1024) throw new Error('Too large');
+    const raw = await new Promise((resolve,reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsText(file); });
+    const data = JSON.parse(raw);
+    if (data.app !== 'fusion-coloring' || !data.favorite || !Array.isArray(data.pages) || data.pages.length !== 1 ||
+      data.pages[0].kind !== 'art' || typeof data.pages[0].image !== 'string' || !data.pages[0].image) throw new Error('Invalid backup');
+    const result = await saveFavoriteDocument(data);
+    await loadCreationGallery();
+    message.textContent = result.existing ? 'This favorite already exists. Its existing versions were kept.' : 'Favorite restored with its saved versions and settings.';
+  } catch (_) { message.textContent = 'Could not restore that favorite. Choose a downloaded fusion-favorite.json backup; your current work is unchanged.'; }
+  finally { input.disabled = false; input.value = ''; }
+};
 document.getElementById('creationname').oninput = scheduleCreationSave;
 document.getElementById('savecreation').onclick = async () => {
   if (!book.length && !creationId) { creationStatus('Create a page or open a saved book first.'); return; }
@@ -2788,11 +2978,13 @@ document.getElementById('newcreation').onclick = async () => {
   document.getElementById('creationname').focus();
 };
 document.addEventListener('keydown', event => {
-  if (document.getElementById('creationsmodal').hidden) return;
+  if (event.defaultPrevented || document.getElementById('creationsmodal').hidden || !document.getElementById('imageviewer').hidden) return;
   if (event.key === 'Escape') { event.preventDefault(); closeCreations(); }
   if (event.key === 'Tab') {
-    const controls = [document.getElementById('creationsclose'), document.getElementById('creationsearch'),
-      ...document.querySelectorAll('#creationgrid button')];
+    const controls = [document.getElementById('creationsclose'), document.getElementById('showbooks'),
+      document.getElementById('showfavorites'), document.getElementById('creationsearch'),
+      ...document.querySelectorAll('#favoriteimport'),
+      ...document.querySelectorAll('#creationgrid button, #creationgrid input, #creationgrid summary')].filter(el => !el.disabled && el.getClientRects().length);
     const index = controls.indexOf(document.activeElement);
     event.preventDefault(); controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus();
   }
@@ -2803,9 +2995,9 @@ window.addEventListener('beforeunload', event => {
 async function initCreations() {
   try {
     if (!window.indexedDB) throw new Error('Unavailable');
-    const request = window.indexedDB.open('fusion-coloring-creations',2);
+    const request = window.indexedDB.open('fusion-coloring-creations',3);
     request.onupgradeneeded = () => {
-      for (const name of ['books','documents','assets']) {
+      for (const name of ['books','documents','assets','favorites']) {
         if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name,{keyPath:'id'});
       }
     };
