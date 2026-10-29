@@ -14,6 +14,7 @@ class Element {
   appendChild(child) { this.children.push(child); return child; }
   addEventListener() {} removeAttribute(name) { delete this[name]; } setAttribute(name,value) { this[name]=value; }
   click() { this.clickCount = (this.clickCount || 0) + 1; } scrollIntoView() { this.scrollCalls=(this.scrollCalls||0)+1; }
+  remove() {} getClientRects() { return this.hidden ? [] : [{}]; }
   focus() { document.activeElement=this; }
   querySelector(tag) { return this.children.find(c => c.tag === tag); }
   getContext() { return {}; }
@@ -31,13 +32,14 @@ const document = {
 let savedBlob, responses = [], requests = [];
 class Reader {
   readAsText(file) { this.result = file.text; return this.onload(); }
+  readAsDataURL(file) { this.result = file.data; return this.onload(); }
 }
 class FakeImage {
   constructor() { this.naturalWidth=1024; this.naturalHeight=1536; }
   set src(value) { if (this.onload) this.onload(); }
 }
-const context = vm.createContext({document, Blob, FileReader:Reader, Image:FakeImage, AbortController,
-  window:{matchMedia:()=>({matches:false}),addEventListener(){}}, confirm:()=>true,
+const context = vm.createContext({document, Blob, FileReader:Reader, Image:FakeImage, AbortController, TextEncoder,
+  window:{crypto:require('node:crypto').webcrypto,matchMedia:()=>({matches:false}),addEventListener(){}}, confirm:()=>true,
   setTimeout:()=>1, clearTimeout(){}, console, localStorage:{getItem:()=>null,setItem(){}},
   URL:{createObjectURL:b=>{savedBlob=b;return 'blob:test'},revokeObjectURL(){}},
   fetch:async (url, options) => {
@@ -183,7 +185,7 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   assert.equal(run('book.length'),2, 'A failed download must not remove pages');
 
   // Transactional storage double: commit both stores together, or neither on abort.
-  const db = {books:new Map(),documents:new Map(),assets:new Map(),fail:false,
+  const db = {books:new Map(),documents:new Map(),assets:new Map(),favorites:new Map(),fail:false,
     transaction(names,mode) {
       const pending=[]; let aborted=false;
       const tx={error:null, abort(){aborted=true;setImmediate(()=>tx.onabort?.());}, objectStore(name){
@@ -272,6 +274,119 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   const pending=run('requestResult({})');timeoutCallback();
   await assert.rejects(pending,/did not respond in time/);
   context.setTimeout=originalTimer;
+
+  // Individual favorites are isolated documents; legacy book rows remain books.
+  run("show(0)");
+  const originalBookLength=run('book.length'), originalBookId=run('creationId');
+  const storedBooksBefore=[...db.books.values()].filter(b=>b.kind!=='favorite').length;
+  await get('savefavorite').onclick();
+  assert.match(get('favoritestatus').textContent,/Saved to My Favorites Gallery/);
+  assert.equal(run('book.length'),originalBookLength);
+  assert.equal(run('creationId'),originalBookId);
+  const favoriteMeta=[...db.favorites.values()].find(b=>b.kind==='favorite');
+  assert.ok(favoriteMeta);
+  context.favoriteId=favoriteMeta.id;
+  const favorite=await run("readCreation(favoriteId,'favorites')");
+  assert.equal(favorite.data.pages.length,1);
+  assert.equal(favorite.data.pages[0].original_image,'raw-pixels');
+  assert.equal(favorite.data.pages[0].generation.prompt,'FULL PROMPT');
+  assert.equal(favorite.data.pages[0].generation.references.style.image,'style-pixels');
+  assert.equal(JSON.stringify(favorite.data).includes('test-only-key'),false);
+  assert.equal(favorite.data.favorite.sourceBook,'Renamed large book');
+  await get('savefavorite').onclick();
+  assert.match(get('favoritestatus').textContent,/Already saved/);
+  assert.equal(db.favorites.size,1);
+
+  // Failed saves never create a metadata-only favorite or claim success.
+  db.fail=true;
+  run("book[0].caption='New unsaved favorite'");
+  await get('savefavorite').onclick();
+  assert.match(get('favoritestatus').textContent,/Could not save/);
+  assert.equal(db.favorites.size,1);
+  db.fail=false;
+  run("book[0].caption='Changed in the book only'");
+  assert.notEqual((await run("readCreation(favoriteId,'favorites')")).data.pages[0].caption,run('book[0].caption'));
+  get('creationsearch').value='';
+  await run('showCreations()');
+  assert.equal(get('creationgrid').children.length,storedBooksBefore);
+  get('showfavorites').onclick();
+  assert.equal(get('creationgrid').children.length,1);
+  assert.equal(get('favoriteimportlabel').hidden,false);
+  get('creationsearch').value='not in this gallery'; get('creationsearch').oninput();
+  assert.equal(get('creationgrid').children.length,0);
+  get('creationsearch').value=''; get('creationsearch').oninput();
+  const card=get('creationgrid').children[0];
+  const details=card.children.find(c=>c.tag==='details'); details.open=true; await details.ontoggle();
+  assert.ok(details.children.some(c=>c.textContent==='FULL PROMPT'));
+
+  // Colored companions append without replacing the outline or original.
+  context.colorFile={name:'Unicorn color.png',type:'image/png',size:30,data:'data:image/png;base64,colored-pixels'};
+  await run('attachFavoriteColor(favoriteId,colorFile)');
+  let withColor=await run("readCreation(favoriteId,'favorites')");
+  assert.equal(withColor.data.pages[0].image,favorite.data.pages[0].image);
+  assert.equal(withColor.data.pages[0].original_image,'raw-pixels');
+  assert.equal(withColor.data.favorite.coloredVersions[0].image,'colored-pixels');
+  await run('attachFavoriteColor(favoriteId,colorFile)');
+  assert.equal((await run("readCreation(favoriteId,'favorites')")).data.favorite.coloredVersions.length,1);
+  db.fail=true;
+  context.colorFile={...context.colorFile,data:'data:image/png;base64,second-color'};
+  await run('attachFavoriteColor(favoriteId,colorFile)');
+  assert.match(get('creationsmessage').textContent,/Could not save/);
+  assert.equal((await run("readCreation(favoriteId,'favorites')")).data.favorite.coloredVersions.length,1);
+  db.fail=false;
+
+  // Favorite backup includes companion pixels and can restore into an empty gallery.
+  context.URL.createObjectURL=b=>{savedBlob=b;return 'blob:test'};
+  await run("favoriteAction(favoriteId,'backup')");
+  const favoriteBackup=JSON.parse(await savedBlob.text());
+  assert.equal(favoriteBackup.favorite.coloredVersions[0].image,'colored-pixels');
+  assert.equal(favoriteBackup.pages[0].generation.prompt,'FULL PROMPT');
+  assert.equal(JSON.stringify(favoriteBackup).includes('test-only-key'),false);
+  db.favorites.delete(favoriteMeta.id);db.documents.delete(favoriteMeta.id);
+  get('favoriteimport').files=[{size:100,text:JSON.stringify(favoriteBackup)}];
+  await get('favoriteimport').onchange({target:get('favoriteimport')});
+  assert.match(get('creationsmessage').textContent,/Favorite restored/);
+  withColor=await run("readCreation(favoriteId,'favorites')");
+  assert.equal(withColor.data.favorite.coloredVersions[0].image,'colored-pixels');
+  assert.equal(run('creationId'),originalBookId);
+  await get('favoriteimport').onchange({target:get('favoriteimport')});
+  assert.match(get('creationsmessage').textContent,/already exists/);
+
+  // Add a detached copy; keep the active book, its existing pages, and favorite intact.
+  await run("favoriteAction(favoriteId,'add')");
+  assert.equal(run('creationId'),originalBookId);
+  assert.equal(run('book.length'),originalBookLength+1);
+  assert.equal(run('book[book.length-1].original_image'),'raw-pixels');
+  assert.equal(run('book[book.length-1].generation.prompt'),'FULL PROMPT');
+  run("book[book.length-1].generation.prompt='Edited copy'");
+  assert.equal((await run("readCreation(favoriteId,'favorites')")).data.pages[0].generation.prompt,'FULL PROMPT');
+  assert.equal([...db.books.values()].filter(b=>b.kind!=='favorite').length,storedBooksBefore);
+  get('savefavorite').hidden=false;run('show(-1)');assert.equal(get('savefavorite').hidden,true);
+
+  // An older favorite revision cannot overwrite a colored companion from another tab.
+  const colorBefore=JSON.stringify(db.documents.get(favoriteMeta.id));
+  context.staleFavoriteMeta={...db.favorites.get(favoriteMeta.id)};
+  db.favorites.get(favoriteMeta.id).revision+=1;
+  await assert.rejects(run('writeCreation(staleFavoriteMeta,prepareCreationDocument({pages:[]}),staleFavoriteMeta.revision)'),/another tab/);
+  assert.equal(JSON.stringify(db.documents.get(favoriteMeta.id)),colorBefore);
+  get('favoriteimport').files=[{size:30,text:'{"pages":[]}'}];
+  await get('favoriteimport').onchange({target:get('favoriteimport')});
+  assert.match(get('creationsmessage').textContent,/Could not restore/);
+  assert.equal(run('book.length'),originalBookLength+1);
+
+  // Version 3 adds only the missing favorites store, preserving all version 2 stores.
+  const existingStores=new Set(['books','documents','assets']), addedStores=[];
+  db.objectStoreNames={contains:name=>existingStores.has(name)};
+  db.createObjectStore=(name,options)=>{assert.equal(options.keyPath,'id');addedStores.push(name);existingStores.add(name);};
+  context.window.indexedDB={open(name,version){
+    assert.equal(name,'fusion-coloring-creations');assert.equal(version,3);
+    const request={result:db};queueMicrotask(()=>{request.onupgradeneeded();request.onsuccess();});return request;
+  }};
+  await run('initCreations()');
+  assert.deepEqual(addedStores,['favorites']);
+  assert.equal(db.books.size,storedBooksBefore);
+  assert.equal(db.favorites.size,1);
+  console.log('PASS: favorite isolation, duplicate saves, failure recovery, book/favorite filtering, prompt details, colored companions, backup restore and reuse');
   console.log('PASS: deduplicated artwork, metadata-only renames, hydrated originals/references, password-manager key isolation and storage timeout');
 
   console.log('PASS: My Creations saves, prompts/originals, gallery/search/reopen, failure recovery and multi-tab conflict preservation');
