@@ -5,11 +5,40 @@ import unittest
 import base64
 import json
 import threading
+import random
+from unittest.mock import patch
 import urllib.request
 from PIL import Image
 import folio_press
 
 class PrintPlacementTests(unittest.TestCase):
+    def test_native_line_conversion_matches_exact_threshold(self):
+        rng=random.Random(17)
+        for width in [1,7,8,13,97]:
+            rgb=bytes(rng.randrange(256) for _ in range(width*19*3))
+            for threshold in [0,1,128,192,255]:
+                with patch.object(folio_press,'HAS_PIL',False): expected=folio_press.rgb_to_bilevel(rgb,width,19,threshold)
+                self.assertEqual(folio_press.rgb_to_bilevel(rgb,width,19,threshold),expected)
+
+    def test_fast_png_decode_matches_existing_pixels(self):
+        for mode,alpha in [('RGB',None),('RGBA',255),('RGBA',127)]:
+            image=Image.new(mode,(13,9))
+            values=[(x*17%256,x*43%256,x*71%256) for x in range(117)]
+            image.putdata(values if alpha is None else [(*rgb,alpha) for rgb in values])
+            stream=io.BytesIO();image.save(stream,format='PNG')
+            with patch.object(folio_press,'HAS_PIL',False): expected=folio_press.png_to_rgb(stream.getvalue())
+            self.assertEqual(folio_press.png_to_rgb(stream.getvalue()),expected)
+
+    def test_native_threshold_keeps_identical_print_pixels(self):
+        rng=random.Random(73)
+        rgb=bytes(rng.randrange(256) for _ in range(13*9*3))
+        original=Image.frombytes('RGB',(13,9),rgb)
+        old=original.resize((49,33),Image.Resampling.NEAREST)
+        expected,_=folio_press.rgb_to_bilevel(old.tobytes(),49,33)
+        native,_=folio_press.rgb_to_bilevel(rgb,13,9)
+        fast=Image.frombytes('1',(13,9),native).resize((49,33),Image.Resampling.NEAREST)
+        self.assertEqual(fast.tobytes(),expected)
+
     def test_wrap_cover_has_a_valid_catalog(self):
         for image in [None,self.sample()]:
             pdf=folio_press.build_cover_pdf('Cover test','Subtitle','Author','Back message',17,'white','#254AA6',False,image)
