@@ -564,7 +564,7 @@ HTML = """<!DOCTYPE html>
     <details class="step">
       <summary>%ICON_04%<span class="n">04</span> Cover</summary>
       <div class="stepbody">
-        <p>Build the KDP full-wrap cover from your finished page count.</p>
+        <p>Create covers for your complete book PDF. A separate full-wrap export is available for KDP.</p>
 
         <label for="ctitle">Book title</label>
 
@@ -630,10 +630,17 @@ HTML = """<!DOCTYPE html>
         <button id="cartgen">Generate cover art</button>
 
         <button class="ghost" id="cartupload" type="button">Upload cover art</button>
+        <button class="ghost" id="cartselected" type="button">Use selected page for front cover</button>
 
         <input type="file" id="cartfile" accept="image/*" hidden>
 
         <div class="coverart"><img id="cartimg" alt="" hidden></div>
+        <p>Back artwork for the complete book PDF (optional)</p>
+        <button class="ghost" id="backselected" type="button">Use selected page for back cover</button>
+        <button class="ghost" id="backupload" type="button">Upload back cover artwork</button>
+        <input type="file" id="backfile" accept="image/*" hidden>
+        <div class="coverart"><img id="backimg" alt="Back cover artwork" hidden></div>
+        <button class="ghost" id="backclear" type="button">Remove back cover artwork</button>
 
         <div class="coverspec" id="coverspec"></div>
 
@@ -647,7 +654,7 @@ HTML = """<!DOCTYPE html>
 
         </div>
 
-        <button id="cbuild">Build cover PDF</button>
+        <button id="cbuild">Build KDP wrap cover PDF</button>
 
         <p class="status" id="cstatus"></p>
       </div>
@@ -656,6 +663,9 @@ HTML = """<!DOCTYPE html>
       <summary>%ICON_05%<span class="n">05</span> Publish</summary>
       <div class="stepbody">
         <h2 class="sub">%%MANDALA_MED%%Book &amp; files</h2>
+            <button id="completebook" type="button" disabled>Download complete book</button>
+            <p class="count">One 8½ × 11-inch PDF: front cover, every page in this book in its arranged order, then back cover. Set your title and artwork in Cover. No KDP setup required.</p>
+            <p class="status" id="completestatus" role="status" aria-live="polite"></p>
             <p class="count" id="count">0 pages</p>
             <button class="ghost" id="pad" hidden>Add blank plates</button>
             <label class="check" id="markswrap" hidden><input id="cmarks" type="checkbox" checked> Print captions &amp; page numbers</label>
@@ -863,7 +873,7 @@ let creationConnecting = null, creationStorageError = '', creationGalleryState =
 function captureBookCheckpoint() {
   const fields = (item) => Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'w' && key !== 'h'));
   return { pages: book.map(fields), characters: characters.map(fields),
-    style: styleReference, ornament: storyOrnament, marks: marksOn(), kdp: JSON.stringify(kdpSaveData()) };
+    style: styleReference, ornament: storyOrnament, marks: marksOn(), kdp: JSON.stringify(kdpSaveData()), cover:coverSaveData() };
 }
 
 function sameBookCheckpoint(a, b) {
@@ -872,7 +882,7 @@ function sameBookCheckpoint(a, b) {
     const keys = Object.keys(item);
     return keys.length === Object.keys(y[i]).length && keys.every((key) => item[key] === y[i][key]);
   });
-  return sameItems(a.pages, b.pages) && sameItems(a.characters, b.characters);
+  return sameItems(a.pages, b.pages) && sameItems(a.characters, b.characters) && sameItems([a.cover || {}],[b.cover || {}]);
 }
 
 function refreshBookState() {
@@ -1000,6 +1010,7 @@ function nextMultipleOf4(n) {
 function renderCount() {
   const n = book.length;
   document.getElementById('quicksavebook').disabled = n === 0;
+  document.getElementById('completebook').disabled = n === 0;
   const target = nextMultipleOf4(n);
   const gap = target - n;
   if (n === 0) {
@@ -1633,6 +1644,7 @@ function restoreBookDocument(data) {
       saveCharacters();
       renderCharacters();
       kdpLoadData(!Array.isArray(data) ? data.kdp : null);
+      loadCoverData(!Array.isArray(data) ? data.cover : null);
       clearStoryForm();
 }
 
@@ -2410,6 +2422,29 @@ function kdpLoadData(d) {
 
 /* ---- Cover builder ---- */
 const coverArt = { image: null, w: 0, h: 0 };
+let backCoverImage = null;
+function coverSaveData() {
+  const get = id => document.getElementById(id).value;
+  return {title:get('ctitle'),subtitle:get('csubtitle'),author:get('cauthor'),blurb:get('cblurb'),
+    back_color:get('ccolor'),paper:get('cpaper'),pages:get('cpages'),barcode:document.getElementById('cbarcode').checked,
+    front_image:coverArt.image,back_image:backCoverImage};
+}
+function loadCoverData(data) {
+  const d = data || {};
+  for (const [id,value] of Object.entries({ctitle:d.title,csubtitle:d.subtitle,cauthor:d.author,cblurb:d.blurb,
+    ccolor:d.back_color || '#3F6B4C',cpaper:d.paper || 'white',cpages:d.pages || '24'})) document.getElementById(id).value = value || '';
+  document.getElementById('cbarcode').checked = d.barcode !== false;
+  coverArt.image = null; coverArt.w = 0; coverArt.h = 0;
+  document.getElementById('cartimg').hidden = true;
+  if (d.front_image) setCoverArt(d.front_image,false);
+  backCoverImage = d.back_image || null;
+  document.getElementById('backimg').hidden = !backCoverImage;
+  if (backCoverImage) document.getElementById('backimg').src = 'data:image/png;base64,' + backCoverImage;
+  updateCoverSpec();
+}
+document.addEventListener('input', event => {
+  if (['ctitle','csubtitle','cauthor','cblurb','ccolor','cpaper','cpages','cbarcode'].includes(event.target.id)) refreshBookState();
+});
 
 function coverSpec() {
   const pages = Math.max(0, parseInt(document.getElementById('cpages').value) || 0);
@@ -2444,11 +2479,14 @@ function updateCoverSpec() {
   document.getElementById('cmfront').style.width = (8.625 * unit) + '%';
 }
 
-function setCoverArt(b64) {
+function setCoverArt(b64, changed = true) {
   const img = document.getElementById('cartimg');
+  coverArt.image = b64; coverArt.w = 0; coverArt.h = 0;
+  img.src = 'data:image/png;base64,' + b64; img.hidden = false;
+  if (changed) refreshBookState();
   const probe = new Image();
   probe.onload = () => {
-    coverArt.image = b64;
+    if (coverArt.image !== b64) return;
     coverArt.w = probe.naturalWidth;
     coverArt.h = probe.naturalHeight;
     img.src = 'data:image/png;base64,' + b64;
@@ -2461,6 +2499,7 @@ function setCoverArt(b64) {
 document.getElementById('csync').onclick = () => {
   document.getElementById('cpages').value = book.length || 24;
   updateCoverSpec();
+  refreshBookState();
 };
 
 document.getElementById('cartgen').onclick = async () => {
@@ -2488,6 +2527,49 @@ document.getElementById('cartgen').onclick = async () => {
 };
 
 document.getElementById('cartupload').onclick = () => document.getElementById('cartfile').click();
+document.getElementById('cartselected').onclick = () => {
+  const page = book[current];
+  if (!page?.image) { document.getElementById('cstatus').textContent = 'Select an illustration in the studio first.'; return; }
+  setCoverArt(page.image); document.getElementById('cstatus').textContent = 'Front cover artwork selected. The original page is unchanged.';
+};
+function setBackCover(image) {
+  backCoverImage = image;
+  const preview = document.getElementById('backimg'); preview.hidden = !image;
+  if (image) preview.src = 'data:image/png;base64,' + image;
+  refreshBookState();
+}
+document.getElementById('backselected').onclick = () => {
+  const page = book[current];
+  if (!page?.image) { document.getElementById('cstatus').textContent = 'Select an illustration in the studio first.'; return; }
+  setBackCover(page.image); document.getElementById('cstatus').textContent = 'Back cover artwork selected.';
+};
+document.getElementById('backclear').onclick = () => setBackCover(null);
+document.getElementById('backupload').onclick = () => document.getElementById('backfile').click();
+document.getElementById('backfile').onchange = event => {
+  const input = event.target, file = input.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { const image = new Image(); image.onload = () => {setBackCover(reader.result.split(',')[1]);document.getElementById('cstatus').textContent = 'Back cover artwork loaded.';}; image.onerror = () => {document.getElementById('cstatus').textContent = 'Could not read that image.';}; image.src = reader.result; };
+  reader.onerror = () => {document.getElementById('cstatus').textContent = 'Could not read that file.';};
+  reader.readAsDataURL(file); input.value = '';
+};
+document.getElementById('completebook').onclick = async () => {
+  const button = document.getElementById('completebook'), status = document.getElementById('completestatus');
+  if (!book.length) { status.textContent = 'Add pages to this book first.'; return; }
+  const cover = coverSaveData();
+  if (!cover.title.trim()) { status.textContent = 'Enter your book title in 04 · Cover first.'; return; }
+  const payload = {pages:serializeBook(),cover,ornament:storyOrnament,marks:marksOn()};
+  button.disabled = true; status.textContent = 'Making your complete book PDF…';
+  try {
+    const response = await fetch('/complete-book',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if (!response.ok) { const error = await response.json().catch(()=>({})); throw new Error(error.error || 'Could not make the complete book.'); }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a'); link.href = url;
+    link.download = (cover.title.trim().replace(/[^a-zA-Z0-9_-]+/g,'-').slice(0,70) || 'coloring-book') + '-complete.pdf';
+    document.body.appendChild(link); link.click(); link.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000);
+    status.textContent = 'Complete book downloaded: front cover, ' + payload.pages.length + ' inside pages, and back cover. Ready to share or print.';
+  } catch (error) { status.textContent = error.message + ' Your book and artwork are unchanged.'; }
+  finally { button.disabled = book.length === 0; }
+};
 
 document.getElementById('cartfile').onchange = () => {
   const st = document.getElementById('cstatus');
@@ -2567,7 +2649,7 @@ updateCoverSpec();
 function bookDocument() {
   return { app:'fusion-coloring', version:4, title:creationName(), pages:book.map(p => ({...p})),
     styleReference, ornament:storyOrnament, marks:marksOn(),
-    characters:characters.map(c => ({...c})), kdp:kdpSaveData() };
+    characters:characters.map(c => ({...c})), kdp:kdpSaveData(),cover:coverSaveData() };
 }
 function creationName() { return document.getElementById('creationname').value.trim().slice(0,100) || 'Untitled book'; }
 function creationStatus(text) { document.getElementById('creationstatus').textContent = text; }
@@ -3347,7 +3429,46 @@ def render_text_page(page, fonts, ornament):
     return b"\n".join(parts)
 
 
-def build_pdf(pages, ornament=None, marks=True):
+def render_share_cover(page, fonts, image=None):
+    """A single letter-size cover for sharing, with artwork contained, never cropped."""
+    bg = hex_to_rgb01(page.get('back_color') or '#3F6B4C')
+    ink = ink_for(bg)
+    parts = [b'%.3f %.3f %.3f rg 0 0 612 792 re f' % bg,
+             b'%.3f %.3f %.3f rg' % ink]
+    front = page.get('side') == 'front'
+    size = 30 if front else 24
+    title_lines = wrap_para(page.get('title') or '', 520, size)
+    # Long titles shrink to fit rather than losing words.
+    while len(title_lines) > 4 and size > 12:
+        size -= 2
+        title_lines = wrap_para(page.get('title') or '', 520, size)
+    y = 730
+    for line in title_lines:
+        parts.append(_ct(fonts[1], size, 306, y, line,color=ink)); y -= size + 8
+    text = (page.get('subtitle') if front else page.get('blurb')) or ''
+    if not front and not text:
+        text = 'Made for you to color, imagine, and enjoy.'
+    text_size = 16 if front else 14
+    lines = wrap_para(text, 500, text_size)
+    while len(lines) * (text_size + 6) > y - 130 and text_size > 9:
+        text_size -= 1; lines = wrap_para(text, 500, text_size)
+    y -= 8
+    for line in lines:
+        parts.append(_ct(fonts[0], text_size, 306, y, line,color=ink)); y -= text_size + 6
+    if image:
+        image_id, width, height = image
+        bottom, top = 100 if front else 55, y - 24
+        if top <= bottom: raise ValueError('Cover text is too long. Shorten the title, subtitle or back-cover message.')
+        fit = min(516 / width, (top - bottom) / height)
+        w, h = width * fit, height * fit
+        parts.append(b'q %.2f 0 0 %.2f %.2f %.2f cm /Im%d Do Q' % (w,h,(612-w)/2,bottom+(top-bottom-h)/2,image_id))
+    if front and page.get('author'):
+        for offset, line in enumerate(wrap_para(page['author'], 516, 16)):
+            parts.append(_ct(fonts[1],16,306,65-offset*20,line,color=ink))
+    return b'\n'.join(parts)
+
+
+def build_pdf(pages, ornament=None, marks=True, folio_offset=0):
     """pages: list of dicts: kind 'art'|'blank'|'story', png (bytes|None),
     caption, title, subtitle, body, note, variant, publisher.
     ornament: None or dict with image (b64 png) stamped on text pages.
@@ -3363,6 +3484,8 @@ def build_pdf(pages, ornament=None, marks=True):
     # Leave book images unchanged; resample only the PDF artwork.
     for page in pages:
         kind = page.get("kind") or ("art" if page.get("png") else "blank")
+        if kind == 'sharecover':
+            prepared.append(('sharecover',page)); continue
         if kind == "story":
             prepared.append(("story", page))
             continue
@@ -3406,7 +3529,20 @@ def build_pdf(pages, ornament=None, marks=True):
             orn = None
     for index, item in enumerate(prepared, start=1):
         kind, payload = item
-        if kind == "story":
+        if kind == 'sharecover':
+            image = None
+            if payload.get('png'):
+                w,h,rgb = png_to_rgb(payload['png'])
+                compressed = zlib.compress(rgb)
+                image_id = add((b'<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length %d >>\nstream\n' % (w,h,len(compressed))) + compressed + b'\nendstream')
+                image = (image_id,w,h)
+            content = render_share_cover(payload,fonts,image)
+            content_id = add(b'<< /Length %d >>\nstream\n' % len(content) + content + b'\nendstream')
+            resources = '<< /Font << /F%d %d 0 R /F%d %d 0 R >>' % (font_id,font_id,fbold_id,fbold_id)
+            if image: resources += ' /XObject << /Im%d %d 0 R >>' % (image[0],image[0])
+            resources += ' >>'
+            page_id = add(('<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] /Contents %d 0 R /Resources %s >>' % (pages_id,content_id,resources)).encode())
+        elif kind == "story":
             content = render_text_page(payload, fonts, orn)
             content_id = add(
                 b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream"
@@ -3422,7 +3558,7 @@ def build_pdf(pages, ornament=None, marks=True):
             )
         elif kind == "blank":
             caption = payload
-            pm = page_marks(caption, index) if marks else b""
+            pm = page_marks(caption, index - folio_offset) if marks else b""
             content_id = add(
                 f"<< /Length {len(pm)} >>\nstream\n".encode() + pm + b"\nendstream"
             )
@@ -3432,7 +3568,7 @@ def build_pdf(pages, ornament=None, marks=True):
             )
         else:
             (width, height, compressed), caption = payload
-            pm = page_marks(caption, index) if marks else b""
+            pm = page_marks(caption, index - folio_offset) if marks else b""
             image_id = add(
                 f"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} "
                 f"/ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /FlateDecode "
@@ -3806,7 +3942,7 @@ def build_cover_pdf(title, subtitle, author, blurb, pages, paper, back_hex, barc
          "/Contents %d 0 R /Resources %s >>" % (pages_id, W, H, content_id, resources)).encode()
     )
     objects[pages_id - 1] = ("<< /Type /Pages /Count 1 /Kids [%d 0 R] >>" % page_id).encode()
-    catalog_id = add(("/<< /Type /Catalog /Pages %d 0 R >>" % pages_id).encode())
+    catalog_id = add(("<< /Type /Catalog /Pages %d 0 R >>" % pages_id).encode())
 
     out = bytearray(b"%PDF-1.4\n")
     offsets = [0]
@@ -4014,6 +4150,8 @@ class Handler(BaseHTTPRequestHandler):
             self.compose(body)
         elif self.path == "/pdf":
             self.pdf(body)
+        elif self.path == "/complete-book":
+            self.pdf(body,complete=True)
         elif self.path == "/preflight":
             self.preflight(body)
         elif self.path == "/cover-art":
@@ -4084,7 +4222,7 @@ class Handler(BaseHTTPRequestHandler):
             result["original_image"] = original_image
         self._json(200, result)
 
-    def pdf(self, body):
+    def pdf(self, body, complete=False):
         raw_pages = body.get("pages") or []
         if not raw_pages:
             self._json(400, {"error": "There are no pages yet."})
@@ -4110,13 +4248,26 @@ class Handler(BaseHTTPRequestHandler):
                 pages.append(page)
             ornament = body.get("ornament")
             marks = body.get("marks", True)
-            pdf = build_pdf(pages, ornament=ornament, marks=marks)
+            if complete:
+                cover = body.get('cover')
+                if not isinstance(cover,dict) or not isinstance(cover.get('title'),str) or not cover['title'].strip():
+                    raise ValueError('Enter a book title in Cover first.')
+                for field, limit in [('title',300),('subtitle',500),('author',200),('blurb',2000)]:
+                    if not isinstance(cover.get(field,''),str) or len(cover.get(field,'')) > limit:
+                        raise ValueError('Cover %s is too long or invalid.' % field)
+                covers = []
+                for side in ['front','back']:
+                    raw = cover.get(side + '_image')
+                    covers.append(dict(cover,kind='sharecover',side=side,png=base64.b64decode(raw,validate=True) if raw else None))
+                pdf = build_pdf([covers[0]] + pages + [covers[1]],ornament=ornament,marks=marks,folio_offset=1)
+            else:
+                pdf = build_pdf(pages, ornament=ornament, marks=marks)
         except Exception as e:
             self._json(400, {"error": str(e)})
             return
         self.send_response(200)
         self.send_header("Content-Type", "application/pdf")
-        self.send_header("Content-Disposition", "attachment; filename=fusion-coloring-interior.pdf")
+        self.send_header("Content-Disposition", "attachment; filename=" + ('fusion-coloring-complete.pdf' if complete else 'fusion-coloring-interior.pdf'))
         self.send_header("Content-Length", str(len(pdf)))
         self.end_headers()
         self.wfile.write(pdf)
