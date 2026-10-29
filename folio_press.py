@@ -373,6 +373,7 @@ HTML = """<!DOCTYPE html>
   .creationcard .favoritepreview { background:white; border:1px solid var(--line); padding:0; }
   .favoriteupload { font-size:.8rem; margin-top:.6rem; }
   .favoriteupload input { padding:.4rem; font-size:.8rem; }
+  #favoriteimportlabel[hidden] { display:none; }
   @media (max-width:800px) {
     .layout { grid-template-columns:minmax(0,1fr); }
     .canvas { grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto auto; overflow:visible; scroll-margin-top:.5rem; }
