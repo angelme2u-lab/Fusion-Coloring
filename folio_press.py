@@ -3,9 +3,10 @@
 import json, base64, struct, zlib, time, unicodedata, urllib.request, os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
+from io import BytesIO
 
 try:
-    from PIL import Image as _PILImage
+    from PIL import Image as _PILImage, ImageMath as _PILImageMath
     HAS_PIL = True
 except ImportError:
     _PILImage = None
@@ -3217,6 +3218,13 @@ def paeth(a, b, c):
 def png_to_rgb(png_bytes):
     if png_bytes[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("not a png")
+    # Pillow decodes opaque PNGs in native code. Keep the legacy alpha path
+    # for transparent pixels so its exact white-compositing behavior is retained.
+    if HAS_PIL and len(png_bytes) > 25 and png_bytes[24] == 8 and png_bytes[25] in (2,6):
+        with _PILImage.open(BytesIO(png_bytes)) as image:
+            if image.mode == 'RGB' or (image.mode == 'RGBA' and image.getextrema()[3] == (255,255)):
+                rgb = image.convert('RGB')
+                return rgb.width,rgb.height,rgb.tobytes()
     pos = 8
     width = height = bit_depth = color_type = None
     idat = b""
@@ -3281,6 +3289,14 @@ def rgb_to_bilevel(rgb, width, height, threshold=INK_THRESHOLD):
     Bit 1 = paper (white), bit 0 = ink (black). Rows are padded to whole bytes.
     """
     rowbytes = (width + 7) // 8
+    if HAS_PIL and hasattr(_PILImageMath,'lambda_eval'):
+        r,g,b = _PILImage.frombytes('RGB',(width,height),rgb).split()
+        # Integer arithmetic matches the fallback's floor-weighted luminance;
+        # normal grayscale conversion rounds and can change faint boundary pixels.
+        lum = _PILImageMath.lambda_eval(lambda bands:
+            (bands['r']*299 + bands['g']*587 + bands['b']*114)/1000,
+            r=r.convert('I'),g=g.convert('I'),b=b.convert('I')).convert('L')
+        return lum.point([255 if n >= threshold else 0 for n in range(256)],'1').tobytes(),rowbytes
     out = bytearray(rowbytes * height)
     for y in range(height):
         base = y * width * 3
@@ -3499,14 +3515,16 @@ def build_pdf(pages, ornament=None, marks=True, folio_offset=0):
         fit = min(box_w / width, box_h / height)
         draw_w, draw_h = width * fit, height * fit
         source_ppi = width / (draw_w / 72)
+        # Threshold native pixels first. Nearest-neighbor scaling commutes with
+        # this threshold, avoiding a Python scan over millions of enlarged pixels.
+        mono, _rowbytes = rgb_to_bilevel(rgb, width, height)
         if HAS_PIL and source_ppi < 300:
             new_w = max(width, round(draw_w / 72 * 300))
             new_h = max(height, round(draw_h / 72 * 300))
-            original = _PILImage.frombytes("RGB", (width, height), rgb)
+            original = _PILImage.frombytes("1", (width, height), mono)
             resample = getattr(_PILImage, "Resampling", _PILImage)
             enlarged = original.resize((new_w, new_h), resample.NEAREST)
-            width, height, rgb = new_w, new_h, enlarged.tobytes()
-        mono, _rowbytes = rgb_to_bilevel(rgb, width, height)
+            width, height, mono = new_w, new_h, enlarged.tobytes()
         prepared.append(("art", ((width, height, zlib.compress(mono)), caption)))
 
     pages_id = add(b"")
