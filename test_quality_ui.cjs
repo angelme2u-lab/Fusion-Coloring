@@ -52,8 +52,8 @@ const run = code => vm.runInContext(code, context);
 get('level').value='medium'; get('key').value='test-only-key'; get('creationsmodal').hidden=true;
 run(script);
 assert.equal(get('quicksavebook').disabled,true);
-get('quickloadbook').onclick();
-assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file picker directly');
+get('importbookbackup').onclick();
+assert.equal(get('loadfile').clickCount,1, 'Import book backup opens the file picker directly');
 
 (async()=>{
   run(`styleReference={name:'approved.png',image:'style-pixels'};
@@ -222,6 +222,14 @@ assert.equal(get('loadfile').clickCount,1, 'Top Open saved book opens the file p
   assert.equal(db.books.size,1,'New book retains existing collection');
   await run('showCreations()');
   assert.equal(get('creationgrid').children.length,1);
+  get('showfavorites').onclick();
+  get('creationsearch').value='old favorite search';
+  await get('quickloadbook').onclick();
+  assert.equal(get('creationsmodal').hidden,false,'Open my books opens the internal bookshelf');
+  assert.equal(run('creationGalleryMode'),'books','Open my books always shows books, even after browsing favorites');
+  assert.equal(get('creationsearch').value,'');
+  assert.equal(get('creationgrid').children.length,1);
+  assert.equal(get('loadfile').clickCount,1,'Opening My Books must not launch the file picker');
   get('creationsearch').value='missing';get('creationsearch').oninput();
   assert.equal(get('creationgrid').children.length,0);
   await run(`openCreation('${firstId}')`);

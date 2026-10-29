@@ -419,7 +419,7 @@ HTML = """<!DOCTYPE html>
   <div class="tagline">Your creative space</div>
   <div class="booktoolbar" role="group" aria-label="Save and open books">
     <button id="mycreations" type="button">My Creations</button>
-    <button id="quickloadbook" type="button">Open saved book</button>
+    <button id="quickloadbook" type="button">Open my books</button>
     <button class="ghost" id="quicksavebook" type="button" disabled>Save book backup</button>
     <a id="quickbookdownload" download="fusion-coloring-book.json" hidden>Download book file</a>
   </div>
@@ -435,7 +435,7 @@ HTML = """<!DOCTYPE html>
     <p id="bookidentity">No book open</p>
     <p id="bookbackupstate" role="status" aria-live="polite">Create pages or open a saved book to begin.</p>
   </div>
-  <p class="status" id="booktoolbarstatus" role="status" aria-live="polite">Open a saved .json book here to restore its pictures and settings.</p>
+  <p class="status" id="booktoolbarstatus" role="status" aria-live="polite">Choose Open my books to browse saved books, or import a book backup from your files.</p>
   </div>
 </header>
 <div class="layout">
@@ -665,7 +665,7 @@ HTML = """<!DOCTYPE html>
             <button class="ghost" id="savebook" hidden>Save book backup (.json)</button>
             <p class="status" id="booksavestatus" role="status" aria-live="polite"></p>
             <a id="bookdownloadlink" download="fusion-coloring-book.json" hidden>Download book file</a>
-            <button class="ghost" id="loadbook">Load book file</button>
+            <button class="ghost" id="loadbook">Import book backup</button>
             <input type="file" id="loadfile" accept="application/json,.json" hidden>
             <h2 class="sub">%%MANDALA_MED%%KDP publishing</h2>
             <p>Everything KDP asks for, in one place. Saved with your book file — copy it over when you publish.</p>
@@ -755,6 +755,7 @@ HTML = """<!DOCTYPE html>
     <div class="creationtabs" role="group" aria-label="Choose gallery">
       <button id="showbooks" type="button" aria-pressed="true">My Books</button>
       <button id="showfavorites" type="button" aria-pressed="false">My Favorites Gallery</button>
+      <button id="importbookbackup" type="button">Import book backup</button>
     </div>
     <label class="creationsearch" id="favoriteimportlabel" hidden>Restore a favorite backup<input id="favoriteimport" type="file" accept=".json,application/json"></label>
     <div class="creationsearch"><label for="creationsearch" id="creationsearchlabel">Find a book by name</label><input id="creationsearch" type="search" placeholder="Search your books"></div>
@@ -1587,7 +1588,11 @@ saveBookBtn.onclick = () => {
 };
 
 loadBookBtn.onclick = () => loadFile.click();
-document.getElementById('quickloadbook').onclick = () => loadFile.click();
+document.getElementById('quickloadbook').onclick = () => {
+  creationGalleryMode = 'books';
+  document.getElementById('creationsearch').value = '';
+  return showCreations();
+};
 document.getElementById('quicksavebook').onclick = saveBookBtn.onclick;
 
 function restoreBookDocument(data) {
@@ -1653,7 +1658,7 @@ loadFile.onchange = () => {
       selectBookPage(book.length - 1);
       status.textContent = 'Book loaded: ' + book.length + ' pages.';
       document.getElementById('booktoolbarstatus').textContent = status.textContent;
-      document.getElementById('quickloadbook').textContent = 'Open another saved book';
+      document.getElementById('quickloadbook').textContent = 'Open my books';
       restoringCreation = false;
       scheduleCreationSave();
     } catch (e) {
@@ -2946,6 +2951,7 @@ document.getElementById('creationsclose').onclick = closeCreations;
 document.getElementById('creationsearch').oninput = renderCreationGallery;
 document.getElementById('showbooks').onclick = () => { creationGalleryMode = 'books'; document.getElementById('creationsearch').value = ''; renderCreationGallery(); };
 document.getElementById('showfavorites').onclick = () => { creationGalleryMode = 'favorites'; document.getElementById('creationsearch').value = ''; renderCreationGallery(); };
+document.getElementById('importbookbackup').onclick = () => { closeCreations(); loadFile.click(); };
 document.getElementById('favoriteimport').onchange = async event => {
   const input = event.target, file = input.files[0], message = document.getElementById('creationsmessage');
   if (!file) return;
@@ -2983,7 +2989,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') { event.preventDefault(); closeCreations(); }
   if (event.key === 'Tab') {
     const controls = [document.getElementById('creationsclose'), document.getElementById('showbooks'),
-      document.getElementById('showfavorites'), document.getElementById('creationsearch'),
+      document.getElementById('showfavorites'), document.getElementById('importbookbackup'), document.getElementById('creationsearch'),
       ...document.querySelectorAll('#favoriteimport'),
       ...document.querySelectorAll('#creationgrid button, #creationgrid input, #creationgrid summary')].filter(el => !el.disabled && el.getClientRects().length);
     const index = controls.indexOf(document.activeElement);
@@ -2994,6 +3000,7 @@ window.addEventListener('beforeunload', event => {
   if (book.length && creationDirty()) { event.preventDefault(); event.returnValue = ''; }
 });
 async function initCreations() {
+  let storageBlocked = false;
   try {
     if (!window.indexedDB) throw new Error('Unavailable');
     const request = window.indexedDB.open('fusion-coloring-creations',3);
@@ -3002,12 +3009,17 @@ async function initCreations() {
         if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name,{keyPath:'id'});
       }
     };
-    request.onblocked = () => creationStatus('Close older Fusion Coloring tabs to enable My Creations.');
+    request.onblocked = () => {
+      storageBlocked = true;
+      creationStatus('Another Fusion Coloring tab is blocking My Books. Save any open work there, then close older Fusion Coloring tabs.');
+    };
     creationsDb = await requestResult(request); creationsReady = true;
     creationsDb.onversionchange = () => { creationsDb.close(); creationsReady = false; creationStatus('Storage updated in another tab. Save a backup, then reopen this app.'); };
     creationStatus('My Creations ready — saves stay in this browser on this device.');
     scheduleCreationSave();
-  } catch (_) { creationStatus('Automatic saving is unavailable in this browser. Use Save book backup to keep your work.'); }
+  } catch (_) { creationStatus(storageBlocked
+    ? 'My Books is waiting for older Fusion Coloring tabs to close. Keep a book backup, close those tabs, then reload this tab. Do not clear website data.'
+    : 'Automatic saving is unavailable in this browser. Use Save book backup to keep your work.'); }
 }
 
 loadCharacters();
