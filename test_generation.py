@@ -68,6 +68,59 @@ class GenerationTests(unittest.TestCase):
                 self.assertIn("unreadable",error)
                 self.assertEqual(send.call_count,1)
 
+    def test_linework_only_does_not_send_reference_subject_to_model(self):
+        with patch.object(app,"generate_image",return_value=(self.original,None)) as generate, patch.object(app,"generate_with_references") as references:
+            status,result=self.compose(style_reference=self.original,style_reference_mode="linework",subject="A horse, not a unicorn")
+            self.assertEqual(status,200)
+            references.assert_not_called()
+            prompt=generate.call_args.args[1]
+            self.assertIn("Measured line-quality reference",prompt)
+            self.assertIn("smooth horn-free forehead",prompt)
+            self.assertNotIn("FIRST input image",prompt)
+            self.assertEqual(result["generation"]["reference_count"],0)
+            self.assertEqual(result["generation"]["style_reference_mode"],"linework")
+
+    def test_linework_mode_keeps_character_identity_references(self):
+        with patch.object(app,"generate_with_references",return_value=(self.original,None)) as generate:
+            status,result=self.compose(style_reference=self.original,references=[self.original],characters=[{"name":"Milo"}])
+            self.assertEqual(status,200)
+            self.assertEqual(generate.call_args.args[2],[base64.b64decode(self.original)])
+            self.assertIn("Measured line-quality",generate.call_args.args[1])
+            self.assertIn("Character identities",generate.call_args.args[1])
+
+    def test_masked_edit_protects_every_unpainted_pixel_and_passes_scene_context(self):
+        original=Image.new("RGBA",(3,1),(30,60,90,255)); original.putpixel((2,0),(100,110,120,80))
+        mask=Image.new("RGBA",(3,1),(0,0,0,255));mask.putpixel((1,0),(0,0,0,0))
+        generated=Image.new("RGB",(3,1),"red")
+        def encode(image):
+            stream=BytesIO();image.save(stream,format="PNG");return base64.b64encode(stream.getvalue()).decode()
+        payload={"key":"test-only-key","prompt":"Make her hair calmer","image":encode(original),"mask":encode(mask),"scene_subject":"A rider over a beautiful city"}
+        request=urllib.request.Request("http://127.0.0.1:%d/edit-art" % self.server.server_port,json.dumps(payload).encode(),{"Content-Type":"application/json"})
+        with patch.object(app,"edit_image",return_value=(encode(generated),None)) as edit:
+            with urllib.request.urlopen(request) as response: result=json.load(response)
+        output=Image.open(BytesIO(base64.b64decode(result["image"]))).convert("RGBA")
+        self.assertEqual(output.getpixel((0,0)),original.getpixel((0,0)))
+        self.assertEqual(output.getpixel((2,0)),original.getpixel((2,0)))
+        self.assertEqual(output.getpixel((1,0)),(255,0,0,255))
+        self.assertIn("beautiful city",edit.call_args.args[1])
+        self.assertTrue(result["edit"]["protected_outside_mask"])
+        self.assertNotIn("test-only-key",json.dumps(result))
+
+    def test_empty_and_wrong_size_masks_fail_before_paid_request(self):
+        for size in [(3,1),(1,1)]:
+            mask=Image.new("RGBA",size,(0,0,0,255));stream=BytesIO();mask.save(stream,format="PNG")
+            with self.subTest(size=size),self.assertRaises(ValueError):
+                app.prepare_protected_edit(base64.b64decode(self.original),stream.getvalue())
+
+    def test_horn_exclusion_does_not_turn_other_animals_into_horses(self):
+        prompt=app.coloring_prompt("A friendly dinosaur with no horns","easy",[])
+        self.assertNotIn("smooth horn-free forehead",prompt)
+
+    def test_precision_edit_model_is_selected(self):
+        with patch.object(app,"_post_images_edits",return_value=(self.original,None)) as send:
+            app.edit_image("test-only-key","Calmer hair",b"source",b"mask")
+            self.assertIn(b"gpt-image-2.5-sunburst",send.call_args.args[1])
+
     def test_audiences_keep_models_and_preserve_original_linework(self):
         for level, model in [("easy", "gpt-image-2.5-flare"),
                              ("medium", "gpt-image-2.5-flare"),
@@ -85,7 +138,7 @@ class GenerationTests(unittest.TestCase):
     def test_style_reference_precedes_character_identity_references(self):
         char_ref = base64.b64encode(b"character-ref").decode()
         with patch.object(app, "generate_with_references", return_value=(self.original, None)) as generate:
-            status, result = self.compose(style_reference=self.original, references=[char_ref],
+            status, result = self.compose(style_reference=self.original, style_reference_mode="layout", references=[char_ref],
                                          characters=[{"name": "Milo", "description": "tabby"}])
             self.assertEqual(status, 200)
             self.assertEqual(generate.call_args.args[2], [base64.b64decode(self.original), b"character-ref"])
@@ -95,7 +148,7 @@ class GenerationTests(unittest.TestCase):
 
     def test_teen_direction_overrides_simple_reference_and_scene_requests(self):
         with patch.object(app, "generate_with_references", return_value=(self.original, None)) as generate:
-            status, result = self.compose(level="medium", style_reference=self.original,
+            status, result = self.compose(level="medium", style_reference=self.original, style_reference_mode="layout",
                                          subject="A realistic unicorn. Very simple children's scenery.")
         self.assertEqual(status, 200)
         prompt = generate.call_args.args[1]
