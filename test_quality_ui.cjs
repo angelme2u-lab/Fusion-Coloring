@@ -56,6 +56,39 @@ get('importbookbackup').onclick();
 assert.equal(get('loadfile').clickCount,1, 'Import book backup opens the file picker directly');
 
 (async()=>{
+  // Fine white gaps and edge grays must survive every line mode.
+  const lineSample=[255,0,255,80,255,160,255,220,255];
+  context.lineSample=lineSample;
+  let previous=lineSample;
+  for(const mode of ['subtle','gentle','balanced','bolder']) {
+    const result=Array.from(run(`strengthenPixels(lineSample,9,1,'${mode}')`));
+    for(let i=0;i<lineSample.length;i++) {
+      if(lineSample[i]===255) assert.equal(result[i],255,'White gaps never fill');
+      assert.ok(result[i]<=previous[i],'Settings increase gradually');
+    }
+    assert.equal(result[1],0,'Black line cores remain black');
+    assert.ok(result[7]>0 && result[7]<220,'Light edge stays graduated, not thresholded');
+    previous=result;
+  }
+  const source={image:'original-lines',w:1024,h:1536};
+  context.lineSource=source;
+  const first=run("strengthenedPage(lineSource,'adjusted-once','balanced')");
+  context.firstLineCopy=first;
+  const second=run("strengthenedPage(firstLineCopy,'adjusted-again','gentle')");
+  assert.equal(second.line_source_image,'original-lines','Repeated adjustments retain the initial source');
+  assert.equal(second.original_image,'original-lines');
+  assert.equal(second.line_treatment.version,'tonal-1');
+  assert.equal(second.w,1024);
+  context.lineBackup={app:'fusion-coloring',version:4,pages:[second]};
+  run('restoreBookDocument(lineBackup)');
+  assert.equal(run('book[0].line_source_image'),'original-lines','Backup reopen preserves non-stacking source');
+  run('book.splice(0,book.length)');
+  context.legacyLineCopy={image:'old-heavy-lines',original_image:'legacy-original',line_treatment:{mode:'bolder'}};
+  assert.equal(run("strengthenedPage(legacyLineCopy,'new-lines','gentle').line_source_image"),'legacy-original');
+  const beforePrematureSave=run('book.length');
+  get('strsave').onclick();
+  assert.equal(run('book.length'),beforePrematureSave,'Cannot save a stale or unfinished preview');
+  console.log('PASS: gradual darkening, untouched white gaps, non-stacking copies and stale-preview save guard');
   // Hold a paid request open and attempt every other entry point.
   const initialFetch = context.fetch;
   let finishRequest, paidCalls=0;
