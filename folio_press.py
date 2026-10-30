@@ -349,8 +349,10 @@ HTML = """<!DOCTYPE html>
   .viewerzoom { min-width:3rem; text-align:center; font-size:.9rem; }
   .viewerhelp { font-size:.85rem; margin:0; padding:.3rem 1rem; }
   .viewerspace { flex:1; min-height:0; overflow:auto; background:#ddd; overscroll-behavior:contain; }
-  .viewerpicture { width:100%; height:100%; }
-  .viewerpicture img { display:block; width:100%; height:100%; object-fit:contain; background:#fff; }
+  .viewerpicture { width:100%; height:auto; }
+  .viewerpicture img { display:block; width:100%; height:auto; background:#fff; }
+  .viewerpicture.fit-image { height:100%; }
+  .viewerpicture.fit-image img { height:100%; object-fit:contain; }
   .creationbar { display:flex; gap:.5rem; align-items:center; justify-content:center; flex-wrap:wrap; margin:.5rem auto 0; }
   .creationbar label { margin:0; font-size:.8rem; }
   .creationbar input { width:min(280px,65vw); padding:.35rem .6rem; font-size:.9rem; }
@@ -782,10 +784,11 @@ HTML = """<!DOCTYPE html>
       <button class="ghost" id="viewerout" type="button" aria-label="Zoom out">−</button>
       <span class="viewerzoom" id="viewerzoom" role="status" aria-live="polite">Fit</span>
       <button class="ghost" id="viewerin" type="button" aria-label="Zoom in">+</button>
+      <button class="ghost" id="viewerwidth" type="button">Fit width</button>
       <button class="ghost" id="viewerfit" type="button">Fit image</button>
       <button id="viewerclose" type="button">Close viewer</button>
     </div>
-    <p class="viewerhelp" id="viewerhelp">Zoom in for detail, then scroll to look around. Press Escape or Close viewer to return.</p>
+    <p class="viewerhelp" id="viewerhelp">Opens at full width. Scroll down to see the rest, or choose Fit image for the whole page. Press Escape or Close viewer to return.</p>
     <div class="viewerspace" id="viewerspace" tabindex="0" aria-label="Scrollable enlarged artwork">
       <div class="viewerpicture" id="viewerpicture"><img id="viewerimage" alt=""></div>
     </div>
@@ -1209,12 +1212,13 @@ function selectBookPage(i) {
 }
 
 let imageViewerZoom = 1;
-function setImageViewerZoom(value) {
+function setImageViewerZoom(value, mode = 'width') {
   imageViewerZoom = Math.max(1, Math.min(4, value));
   const picture = document.getElementById('viewerpicture');
   picture.style.width = (imageViewerZoom * 100) + '%';
-  picture.style.height = (imageViewerZoom * 100) + '%';
-  document.getElementById('viewerzoom').textContent = imageViewerZoom === 1 ? 'Fit' : Math.round(imageViewerZoom * 100) + '%';
+  picture.classList.toggle('fit-image', mode === 'image');
+  picture.style.height = mode === 'image' ? '100%' : 'auto';
+  document.getElementById('viewerzoom').textContent = mode === 'image' ? 'Fit' : Math.round(imageViewerZoom * 100) + '%';
   document.getElementById('viewerout').disabled = imageViewerZoom === 1;
   document.getElementById('viewerin').disabled = imageViewerZoom === 4;
   if (imageViewerZoom === 1) {
@@ -1242,7 +1246,8 @@ document.getElementById('enlargeimage').onclick = () => {
 };
 document.getElementById('viewerin').onclick = () => setImageViewerZoom(imageViewerZoom + .5);
 document.getElementById('viewerout').onclick = () => setImageViewerZoom(imageViewerZoom - .5);
-document.getElementById('viewerfit').onclick = () => setImageViewerZoom(1);
+document.getElementById('viewerwidth').onclick = () => setImageViewerZoom(1);
+document.getElementById('viewerfit').onclick = () => setImageViewerZoom(1, 'image');
 document.getElementById('viewerclose').onclick = closeImageViewer;
 document.getElementById('imageviewer').onclick = (event) => {
   if (event.target === document.getElementById('imageviewer')) closeImageViewer();
@@ -1251,7 +1256,7 @@ document.addEventListener('keydown', (event) => {
   if (document.getElementById('imageviewer').hidden) return;
   if (event.key === 'Escape') { event.preventDefault(); closeImageViewer(); }
   if (event.key === 'Tab') {
-    const controls = ['viewerout','viewerin','viewerfit','viewerclose','viewerspace']
+    const controls = ['viewerout','viewerin','viewerwidth','viewerfit','viewerclose','viewerspace']
       .map(id => document.getElementById(id)).filter(el => !el.disabled);
     const index = controls.indexOf(document.activeElement);
     event.preventDefault();
@@ -3995,10 +4000,14 @@ def _edits_fields(boundary, prompt, model="gpt-image-2.5-flare"):
             _mp_field(boundary, "quality", "high"))
 
 
-COLORING_PROMPT_VERSION = "2026-10-composition-3"
+COLORING_PROMPT_VERSION = "2026-10-scene-intent-4"
 COLORING_STANDARD = (
     "Create one polished portrait black-and-white coloring-book illustration. "
     "Expressive appealing subjects, natural poses, distinct personality, and believable anatomy. "
+    "Convey emotion through specific facial expressions, relaxed or active posture, and meaningful interaction, "
+    "rather than a generic beauty pose. For animals use believable ears, eyes, muzzle and body language. "
+    "Suggest atmosphere through depth, overlapping forms and the setting; keep areas white for coloring. "
+    "Show soft luxurious fabrics through graceful weight, drape and readable folds, not extra ornament. "
     "Crisp confident black outlines on white paper, slightly stronger outer silhouettes and clear object separation. "
     "Purposeful detail and well-defined enclosed spaces that are comfortable to color. Interpret the requested action as a visibly different pose and interaction, not another static front-facing portrait. Let the named subject and location determine the composition; avoid defaulting to the same centered bust, symmetrical floral arch, or repeated facial expression for every scene. When a mandala is requested, create a recognizable decorative radial pattern integrated into the artwork, not merely an arch of flowers. "
     "Compose for a tall portrait page, with a clear focal point and balanced visual weight across the page, avoiding an isolated narrow strip of art or broad accidental blank margins. Use a slim print-safe border. " 
@@ -4021,7 +4030,7 @@ COLORING_AUDIENCES = {
         "do not turn realistic subjects into cartoon characters, enlarge their eyes, or give them baby proportions. "
         "Develop the setting beyond a children's page: include a coherent foreground, middle distance and "
         "simple distant background with several recognizable supporting elements from the requested scene. "
-        "Use individually outlined flowers with distinct petals, leaf groups, readable rocks and architecture, "
+        "Use individually outlined flowers with distinct petals, leaf groups, readable rocks and scene-appropriate objects, "
         "and flowing hair or manes divided into a moderate number of broad locks. "
         "Keep subject interiors spacious and alternate moderate decorative detail with open resting areas. "
         "Compared with an adult page, reduce foliage density, repeated patterns, tiny divisions and surface texture; "
@@ -4040,8 +4049,20 @@ COLORING_AUDIENCES = {
 }
 
 
+CREATOR_SCENE_POLICY = (
+    "Scene fidelity: The creator's requested action, age, expression and exclusions take priority over embellishment. "
+    "Do not add castles, palaces, towers, cottages, bridges or other built structures unless the creator requests them. "
+    "A fantasy dress or unicorn does not imply a castle or royal setting. "
+    "When buildings or structures are excluded, keep the background entirely natural, including distant scenery. "
+    "Do not import unrequested structures or poses from style or character reference backgrounds. "
+    "When riding is requested, show the rider visibly seated on the animal with credible contact and leg placement, "
+    "not standing beside it or merely touching its face. Keep a requested young girl visibly young. "
+    "Increase detail within the requested scene; never change its action or add new scenery to make it more detailed. "
+)
+
+
 def coloring_prompt(subject, level, characters, has_style_reference=False):
-    prompt = COLORING_STANDARD + COLORING_AUDIENCES[level]
+    prompt = COLORING_STANDARD + COLORING_AUDIENCES[level] + CREATOR_SCENE_POLICY
     if has_style_reference:
         prompt += (
             "The FIRST input image is an approved ARTWORK STYLE reference: follow its illustration quality, "
@@ -4072,6 +4093,7 @@ def coloring_prompt(subject, level, characters, has_style_reference=False):
     prompt += ("\nFinal audience direction: honor the specific requested action, subject expression, and scene layout while applying the selected audience's scene complexity throughout, "
                "including when the requested scene or reference contains more or less detail. ")
     prompt += COLORING_AUDIENCES[level]
+    prompt += "\nFinal scene check: " + CREATOR_SCENE_POLICY + "\nFollow this exact request: " + subject
     return prompt
 
 
@@ -4308,6 +4330,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self._json(400, {"error": "Could not read the image or mask."})
             return
+        prompt = ("Revise only the requested area while preserving the original composition, characters, "
+                  "pose and age unless the creator explicitly asks to change them. " + CREATOR_SCENE_POLICY +
+                  "\nRequested edit: " + prompt)
         image, err = edit_image(key, prompt, image_bytes, mask_bytes)
         if err:
             self._json(400, {"error": err})

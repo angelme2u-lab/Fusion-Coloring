@@ -190,6 +190,8 @@ assert.equal(get('loadfile').clickCount,1, 'Import book backup opens the file pi
   assert.equal(get('viewerimage').src,'data:image/png;base64,legacy');
   assert.equal(get('viewertitle').textContent,'Page 1 of 2 — enlarged');
   assert.equal(document.activeElement,get('viewerclose'));
+  assert.equal(get('viewerpicture').style.height,'auto');
+  assert.equal(get('viewerpicture').style.width,'100%');
   get('viewerin').onclick();
   assert.equal(get('viewerzoom').textContent,'150%');
   assert.equal(get('viewerpicture').style.width,'150%');
@@ -198,6 +200,10 @@ assert.equal(get('loadfile').clickCount,1, 'Import book backup opens the file pi
   assert.equal(get('viewerin').disabled,true);
   get('viewerfit').onclick();
   assert.equal(get('viewerzoom').textContent,'Fit');
+  assert.equal(get('viewerpicture').style.height,'100%');
+  get('viewerwidth').onclick();
+  assert.equal(get('viewerzoom').textContent,'100%');
+  assert.equal(get('viewerpicture').style.height,'auto');
   assert.equal(get('viewerout').disabled,true);
   handlers.keydown({key:'Tab',preventDefault(){}});
   assert.equal(document.activeElement,get('viewerspace'));
