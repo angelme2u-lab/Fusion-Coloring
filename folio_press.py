@@ -815,16 +815,16 @@ HTML = """<!DOCTYPE html>
 <div class="editmodal" id="strmodal" hidden>
   <div class="editbox" style="max-width:880px">
     <h2>Strengthen lines</h2>
-    <p>Deepen gray lines or add a little weight along the edges. Nothing else changes.</p>
+    <p>Deepen gray lines gradually while keeping fine detail and white gaps. Each setting starts from the picture before line adjustment.</p>
     <div class="strmodes">
       <label><input type="radio" name="strmode" value="subtle" checked>
-        <span><b>Subtle · barely there</b><i>The lightest touch; only faintest grays deepen.</i></span></label>
+        <span><b>Subtle · barely there</b><i>A light contrast lift with smooth, soft edges.</i></span></label>
       <label><input type="radio" name="strmode" value="gentle">
-        <span><b>Darker only · gentle</b><i>Deepens gray lines; existing black lines keep their width.</i></span></label>
+        <span><b>Darker only · gentle</b><i>Deepens gray lines without spreading ink into white spaces.</i></span></label>
       <label><input type="radio" name="strmode" value="balanced">
-        <span><b>Balanced · in between</b><i>A lighter edge adjustment between Darker only and Slightly bolder.</i></span></label>
+        <span><b>Balanced · in between</b><i>More definition while preserving the small gaps in hair, feathers and scenery.</i></span></label>
       <label><input type="radio" name="strmode" value="bolder">
-        <span><b>Slightly bolder</b><i>Also adds a little weight along existing edges. Fine details may thicken too.</i></span></label>
+        <span><b>Stronger contrast</b><i>The deepest darkening; keeps white pixels white instead of widening every line.</i></span></label>
     </div>
     <label class="check"><input id="strinspect" type="checkbox"> Inspect at full pixel size</label>
     <div class="strpanes">
@@ -1634,7 +1634,7 @@ function restoreBookDocument(data) {
         } else if (p.image) {
           restoredPages.push({ kind: 'art', image: p.image, caption: p.caption || '', w: p.w || 0, h: p.h || 0,
             generation: p.generation || null, original_image: p.original_image || null,
-            line_treatment: p.line_treatment || null });
+            line_treatment: p.line_treatment || null, line_source_image:p.line_source_image || null });
         } else {
           restoredPages.push({ kind: 'blank' });
         }
@@ -2083,47 +2083,18 @@ document.getElementById('editapply').onclick = async () => {
 
 /* ---- Strengthen lines ---- */
 function strengthenPixels(src, w, h, mode) {
-  // Morphological line strengthening: dilate dark pixels by a controlled radius,
-  // then re-threshold. Does not just gamma-darken existing black.
-  const params = {
-    subtle:  { radius: 0, thresh: 140 },
-    gentle:  { radius: 1, thresh: 150 },
-    balanced:{ radius: 1, thresh: 130 },
-    bolder:  { radius: 2, thresh: 120 }
-  }[mode] || { radius: 1, thresh: 150 };
-
-  const n = w * h;
-  // Binary mask of "line" pixels (dark enough)
-  const isLine = new Uint8Array(n);
-  for (let i = 0; i < n; i++) isLine[i] = src[i] < params.thresh ? 1 : 0;
-
-  if (params.radius === 0) {
-    const out = new Float32Array(n);
-    for (let i = 0; i < n; i++) out[i] = isLine[i] ? 0 : 255;
-    return out;
+  // Tonal adjustment only: never spread ink into a neighbouring white pixel.
+  // Preserve antialiasing instead of binarizing and dilating fine detail.
+  const gamma = {subtle:1.12, gentle:1.30, balanced:1.50, bolder:1.75}[mode] || 1.12;
+  const curve = new Uint8Array(256);
+  for (let value = 0; value < 256; value++) {
+    curve[value] = Math.round(255 * Math.pow(value / 255, gamma));
   }
-
-  // Dilate the line mask
-  const dilated = new Uint8Array(n);
-  const r = params.radius;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let hit = 0;
-      for (let dy = -r; dy <= r && !hit; dy++) {
-        const yy = y + dy;
-        if (yy < 0 || yy >= h) continue;
-        for (let dx = -r; dx <= r; dx++) {
-          const xx = x + dx;
-          if (xx < 0 || xx >= w) continue;
-          if (isLine[yy * w + xx]) { hit = 1; break; }
-        }
-      }
-      dilated[y * w + x] = hit;
-    }
+  const out = new Float32Array(w * h);
+  for (let i = 0; i < out.length; i++) {
+    const value = Math.max(0, Math.min(255, Math.round(src[i])));
+    out[i] = curve[value];
   }
-
-  const out = new Float32Array(n);
-  for (let i = 0; i < n; i++) out[i] = dilated[i] ? 0 : 255;
   return out;
 }
 
@@ -2131,16 +2102,21 @@ const strModal = document.getElementById('strmodal');
 const strCurrent = document.getElementById('scurrent');
 const strPreview = document.getElementById('spreview');
 let strIndex = -1, strW = 0, strH = 0, strSrc = null;
+let strPreviewTicket = 0, strPreviewReady = false, strPreviewMode = null;
 
 function openStrengthen(i) {
   const p = book[i];
   if (!p || p.kind !== 'art' || !p.image) return;
   strIndex = i;
+  strPreviewReady = false;
+  document.getElementById('strsave').disabled = true;
+  const loadTicket = ++strPreviewTicket;
   document.getElementById('strstatus').textContent = '';
   document.getElementById('strinspect').checked = false;
   document.querySelectorAll('.strscroll').forEach((el) => el.classList.remove('full'));
   const img = new Image();
   img.onload = () => {
+    if (loadTicket !== strPreviewTicket) return;
     strW = strCurrent.width = img.naturalWidth;
     strH = strCurrent.height = img.naturalHeight;
     strPreview.width = strW;
@@ -2155,7 +2131,12 @@ function openStrengthen(i) {
     strModal.hidden = false;
     runStrengthenPreview();
   };
-  img.src = 'data:image/png;base64,' + p.image;
+  img.onerror = () => {
+    if (loadTicket !== strPreviewTicket) return;
+    strModal.hidden = false;
+    document.getElementById('strstatus').textContent = 'Could not read this picture. The original is unchanged.';
+  };
+  img.src = 'data:image/png;base64,' + (p.line_source_image || (p.line_treatment && p.original_image) || p.image);
 }
 
 function strMode() {
@@ -2165,9 +2146,13 @@ function strMode() {
 
 function runStrengthenPreview() {
   const st = document.getElementById('strstatus');
+  const ticket = ++strPreviewTicket, mode = strMode();
+  strPreviewReady = false;
+  document.getElementById('strsave').disabled = true;
   st.textContent = 'Working…';
   setTimeout(() => {
-    const out = strengthenPixels(strSrc, strW, strH, strMode());
+    if (ticket !== strPreviewTicket || strModal.hidden || !strSrc) return;
+    const out = strengthenPixels(strSrc, strW, strH, mode);
     const c = strPreview.getContext('2d');
     const id = c.createImageData(strW, strH);
     for (let k = 0; k < out.length; k++) {
@@ -2176,7 +2161,9 @@ function runStrengthenPreview() {
       id.data[k * 4 + 3] = 255;
     }
     c.putImageData(id, 0, 0);
-    st.textContent = '';
+    strPreviewReady = true; strPreviewMode = mode;
+    document.getElementById('strsave').disabled = false;
+    st.textContent = 'Preview ready. White gaps are preserved; save creates a separate copy.';
   }, 30);
 }
 
@@ -2184,7 +2171,9 @@ document.querySelectorAll('input[name=strmode]').forEach((r) => { r.onchange = r
 document.getElementById('strinspect').onchange = (e) => {
   document.querySelectorAll('.strscroll').forEach((el) => el.classList.toggle('full', e.target.checked));
 };
-document.getElementById('strcancel').onclick = () => { strModal.hidden = true; };
+document.getElementById('strcancel').onclick = () => {
+  strPreviewTicket++; strPreviewReady = false; strModal.hidden = true;
+};
 document.getElementById('strlines').onclick = () => openStrengthen(current);
 document.getElementById('dlimage').onclick = () => {
   const p = book[current];
@@ -2197,9 +2186,10 @@ document.getElementById('dlimage').onclick = () => {
   a.remove();
 };
 document.getElementById('strsave').onclick = () => {
+  if (!strPreviewReady || strPreviewMode !== strMode() || strModal.hidden) return;
   const b64 = strPreview.toDataURL('image/png').split(',')[1];
   const p = book[strIndex];
-  book.splice(strIndex + 1, 0, strengthenedPage(p, b64, strMode()));
+  book.splice(strIndex + 1, 0, strengthenedPage(p, b64, strPreviewMode));
   strModal.hidden = true;
   renderCount();
   renderThumbs();
@@ -2213,7 +2203,9 @@ function strengthenedPage(source, image, mode) {
     caption: source.caption ? source.caption + ' (lines strengthened)' : 'Lines strengthened',
     generation: source.generation ? JSON.parse(JSON.stringify(source.generation)) : null,
     original_image: source.original_image || source.image,
-    line_treatment: { mode, created_at: new Date().toISOString() } };
+    line_source_image: source.line_source_image || (source.line_treatment && source.original_image) || source.image,
+    w:source.w, h:source.h,
+    line_treatment: { version:'tonal-1', mode, created_at: new Date().toISOString() } };
 }
 
 /* ---- Mazes ---- */
