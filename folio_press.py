@@ -794,7 +794,7 @@ HTML = """<!DOCTYPE html>
       <button class="ghost" id="viewerfit" type="button">Fit image</button>
       <button id="viewerclose" type="button">Close viewer</button>
     </div>
-    <p class="viewerhelp" id="viewerhelp">Opens at full width. Scroll down to see the rest, or choose Fit image for the whole page. Press Escape or Close viewer to return.</p>
+    <p class="viewerhelp" id="viewerhelp">Opens with the whole page fitted on screen. Use + to inspect details, Fit image to see the whole page again, or Fit width for a larger view. Press Escape or Close viewer to return.</p>
     <div class="viewerspace" id="viewerspace" tabindex="0" aria-label="Scrollable enlarged artwork">
       <div class="viewerpicture" id="viewerpicture"><img id="viewerimage" alt=""></div>
     </div>
@@ -1253,7 +1253,7 @@ document.getElementById('enlargeimage').onclick = () => {
   image.alt = 'Enlarged artwork, page ' + (current + 1);
   document.getElementById('viewertitle').textContent = 'Page ' + (current + 1) + ' of ' + book.length + ' — enlarged';
   document.getElementById('imageviewer').hidden = false;
-  setImageViewerZoom(1);
+  setImageViewerZoom(1, 'image');
   document.getElementById('viewerclose').focus();
 };
 document.getElementById('viewerin').onclick = () => setImageViewerZoom(imageViewerZoom + .5);
