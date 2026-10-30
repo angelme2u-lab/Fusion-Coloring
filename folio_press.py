@@ -1391,6 +1391,34 @@ function selectedCharacters() {
   });
 }
 
+/* One paid image request at a time in this tab. No automatic browser retries. */
+function setGenerationBusy(value) {
+  busy = value;
+  ['compose','batchstart','cartgen','editapply'].forEach(id => {
+    document.getElementById(id).disabled = value;
+  });
+}
+async function requestArtwork(path, payload) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 180000);
+  try {
+    const response = await fetch(path, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload), signal:controller.signal
+    });
+    let data;
+    try { data = await response.json(); }
+    catch (_) { throw new Error('The server returned an unreadable response. The result is uncertain; check API usage before trying again.'); }
+    if (!response.ok) throw new Error(data.error || 'The image request failed. Your existing artwork is unchanged.');
+    if (!data.image) throw new Error('No image was returned. Your existing artwork is unchanged.');
+    return data;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('The image request timed out. It may still finish at the provider; check API usage before trying again. Your existing artwork is unchanged.');
+    if (error instanceof TypeError) throw new Error('The connection was interrupted. The result is uncertain; check API usage before trying again. Your existing artwork is unchanged.');
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
 /* ---- Batch compose ---- */
 let batchRunning = false;
 let batchStop = false;
@@ -1401,7 +1429,7 @@ document.getElementById('batchstart').onclick = async () => {
   const st = document.getElementById('batchstatus');
   const scenes = document.getElementById('batchlist').value.split('\\n')
     .map((s) => s.trim()).filter(Boolean);
-  if (batchRunning) return;
+  if (busy || batchRunning) { st.textContent = 'An image is already being created. Wait for it to finish.'; return; }
   if (!key) { st.textContent = 'API key is required.'; return; }
   if (!scenes.length) { st.textContent = 'Write at least one scene, one per line.'; return; }
   const chars = selectedCharacters();
@@ -1414,8 +1442,7 @@ document.getElementById('batchstart').onclick = async () => {
 
   batchRunning = true;
   batchStop = false;
-  busy = true;
-  document.getElementById('batchstart').disabled = true;
+  setGenerationBusy(true);
   document.getElementById('batchstop').hidden = false;
   const q = document.getElementById('batchq');
   q.innerHTML = '';
@@ -1430,6 +1457,7 @@ document.getElementById('batchstart').onclick = async () => {
   });
 
   let done = 0, failed = 0, skipped = 0;
+  try {
   for (const row of rows) {
     if (batchStop) {
       row.dot.className = 'qdot skipped';
@@ -1439,41 +1467,33 @@ document.getElementById('batchstart').onclick = async () => {
     row.dot.className = 'qdot working';
     row.li.scrollIntoView({ block: 'nearest' });
     st.textContent = 'Composing ' + (done + failed + 1) + ' of ' + scenes.length + ': ' + row.scene;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 120000);
     try {
-      const res = await fetch('/compose', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: key, subject: row.scene, level: level,
-          characters: charPayload, references: charRefs, style_reference: styleImage, cleanup }),
-        signal: ctrl.signal
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed');
+      const data = await requestArtwork('/compose', {key, subject:row.scene, level,
+        characters:charPayload, references:charRefs, style_reference:styleImage, cleanup});
       book.push(generatedPage(data, row.scene, referenceSnapshot));
       row.dot.className = 'qdot done';
       done++;
+      scheduleCreationSave();
     } catch (e) {
       row.dot.className = 'qdot failed';
-      const msg = (e && e.name === 'AbortError') ? 'Timed out' : ((e && e.message) || 'Failed');
+      const msg = e.message || 'Failed';
+      batchStop = true; // Pause on failure instead of spending on more requests.
       row.li.title = msg;
       const err = document.createElement('div');
       err.className = 'qerr';
       err.textContent = 'Failed: ' + msg;
       row.li.appendChild(err);
       failed++;
-    } finally {
-      clearTimeout(timer);
     }
     renderCount();
     renderThumbs();
   }
   if (book.length) show(book.length - 1);
-  batchRunning = false;
-  busy = false;
-  document.getElementById('batchstart').disabled = false;
-  document.getElementById('batchstop').hidden = true;
+  } finally {
+    batchRunning = false;
+    setGenerationBusy(false);
+    document.getElementById('batchstop').hidden = true;
+  }
   st.textContent = 'Batch finished: ' + done + ' composed' +
     (failed ? ', ' + failed + ' failed (hover a red dot for why)' : '') +
     (skipped ? ', ' + skipped + ' skipped' : '') +
@@ -1514,11 +1534,8 @@ document.getElementById('compose').onclick = async () => {
   const btn = document.getElementById('compose');
   const level = document.getElementById('level').value;
   if (!key || !subject) { status.textContent = 'Key and a description are both required.'; return; }
-  busy = true;
-  btn.disabled = true;
+  setGenerationBusy(true);
   status.textContent = 'Pressing the plate… this takes a little while. Press once.';
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 120000);
   const chars = selectedCharacters();
   const charPayload = chars.map((c) => ({ name: c.name, description: c.description || '' }));
   const charRefs = [];
@@ -1531,14 +1548,8 @@ document.getElementById('compose').onclick = async () => {
       '… this takes a little while. Press once.';
   }
   try {
-    const res = await fetch('/compose', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key, subject, level, characters: charPayload, references: charRefs, style_reference: styleImage, cleanup }),
-      signal: ctrl.signal
-    });
-    const data = await res.json();
-    if (!res.ok) { status.textContent = data.error || 'Failed.'; return; }
+    const data = await requestArtwork('/compose', {key, subject, level,
+      characters:charPayload, references:charRefs, style_reference:styleImage, cleanup});
     const cur = book[current];
     if (cur && cur.kind === 'art' && !cur.image) {
       Object.assign(cur, generatedPage(data, subject, referenceSnapshot));
@@ -1553,13 +1564,9 @@ document.getElementById('compose').onclick = async () => {
       status.textContent = 'Plate pressed. Change the sentence, then press once more.';
     }
   } catch (e) {
-    status.textContent = (e && e.name === 'AbortError')
-      ? 'The press took too long. Press compose once more.'
-      : 'Could not reach the press.';
+    status.textContent = e.message || 'The image request failed. Your existing artwork is unchanged.';
   } finally {
-    clearTimeout(timer);
-    busy = false;
-    btn.disabled = false;
+    setGenerationBusy(false);
   }
 };
 
@@ -2045,22 +2052,16 @@ function buildMaskB64() {
 
 document.getElementById('editapply').onclick = async () => {
   const st = document.getElementById('editstatus');
+  if (busy) return;
   const key = document.getElementById('key').value.trim();
   const prompt = document.getElementById('editprompt').value.trim();
   if (!editStrokes.length) { st.textContent = 'Paint the area to change first.'; return; }
   if (!key || !prompt) { st.textContent = 'Key and a description of the change are both required.'; return; }
   const btn = document.getElementById('editapply');
-  btn.disabled = true;
+  setGenerationBusy(true);
   st.textContent = 'Repainting just that area… this takes a little while.';
   try {
-    const res = await fetch('/edit-art', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: key, prompt: prompt,
-        image: book[editPageIndex].image, mask: buildMaskB64() })
-    });
-    const data = await res.json();
-    if (!res.ok) { st.textContent = data.error || 'Failed.'; btn.disabled = false; return; }
+    const data = await requestArtwork('/edit-art', {key, prompt, image:book[editPageIndex].image, mask:buildMaskB64()});
     const p = book[editPageIndex];
     book.splice(editPageIndex + 1, 0,
       { kind: 'art', image: data.image, caption: p.caption ? p.caption + ' (revised)' : 'Revised copy' });
@@ -2071,9 +2072,8 @@ document.getElementById('editapply').onclick = async () => {
     document.getElementById('status').textContent =
       'Edited copy added as page ' + (editPageIndex + 2) + ' — the original is untouched.';
   } catch (e) {
-    st.textContent = 'Could not reach the press.';
-  }
-  btn.disabled = false;
+    st.textContent = e.message || 'The image request failed. Your existing artwork is unchanged.';
+  } finally { setGenerationBusy(false); }
 };
 
 /* ---- Strengthen lines ---- */
@@ -2504,27 +2504,21 @@ document.getElementById('csync').onclick = () => {
 };
 
 document.getElementById('cartgen').onclick = async () => {
+  if (busy) return;
   const key = document.getElementById('key').value.trim();
   const prompt = document.getElementById('cartprompt').value.trim();
   const st = document.getElementById('cstatus');
   const btn = document.getElementById('cartgen');
   if (!key || !prompt) { st.textContent = 'Key and a prompt are both required.'; return; }
-  btn.disabled = true;
+  setGenerationBusy(true);
   st.textContent = 'Painting the cover… this takes a little while.';
   try {
-    const res = await fetch('/cover-art', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: key, prompt: prompt })
-    });
-    const data = await res.json();
-    if (!res.ok) { st.textContent = data.error || 'Failed.'; btn.disabled = false; return; }
+    const data = await requestArtwork('/cover-art', {key, prompt});
     setCoverArt(data.image);
     st.textContent = 'Cover art ready.';
   } catch (e) {
-    st.textContent = 'Could not reach the press.';
-  }
-  btn.disabled = false;
+    st.textContent = e.message || 'The image request failed. Your existing artwork is unchanged.';
+  } finally { setGenerationBusy(false); }
 };
 
 document.getElementById('cartupload').onclick = () => document.getElementById('cartfile').click();
@@ -3746,59 +3740,38 @@ def clean_to_lineart(b64):
     except Exception:
         return b64
 
+IMAGE_REQUEST_TIMEOUT = 150
+
+
+def _image_request(req):
+    """Never retry an uncertain paid request automatically."""
+    try:
+        with urllib.request.urlopen(req, timeout=IMAGE_REQUEST_TIMEOUT) as response:
+            data = json.load(response)
+        image = data["data"][0]["b64_json"]
+        if not image:
+            raise ValueError("empty image")
+        return image, None
+    except urllib.error.HTTPError as error:
+        if error.code == 401:
+            return None, "The API key was not accepted. Choose your saved key or enter a valid key."
+        if error.code == 429:
+            return None, "The provider reports a rate or spending limit. Check API billing and limits before trying again. No automatic retry was made."
+        return None, "The image provider could not complete this request (HTTP %d). No automatic retry was made. Your existing artwork is unchanged." % error.code
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None, "The connection to the image provider timed out or was interrupted. The result is uncertain; check API usage before trying again. No automatic retry was made."
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None, "The provider returned an unreadable image response. Check API usage before trying again. No automatic retry was made."
+
+
 def generate_image(key, prompt, model="gpt-image-2.5-flare"):
-    """Call the images API. Returns (b64, None) or (None, error_message).
-
-    Retries rate limits and connection hiccups; falls back from portrait
-    to square if the model rejects the size.
-    """
-    def attempt(size):
-        last = "request failed"
-        for i in range(3):
-            req = urllib.request.Request(
-                "https://api.openai.com/v1/images/generations",
-                data=json.dumps({
-                    "model": model,
-                    "prompt": prompt,
-                    "n": 1,
-                    "size": size,
-                    "quality": "high",
-                }).encode(),
-                headers={
-                    "Authorization": "Bearer " + key,
-                    "Content-Type": "application/json",
-                },
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=110) as res:
-                    return json.load(res)["data"][0]["b64_json"], None
-            except urllib.error.HTTPError as e:
-                if e.code == 429 and i < 2:
-                    time.sleep(2 * (i + 1))
-                    continue
-                try:
-                    msg = json.loads(e.read().decode())["error"]["message"]
-                except Exception:
-                    msg = "request failed"
-                if "size" in msg.lower() or "dimension" in msg.lower():
-                    return None, ("size", msg)
-                return None, ("fatal", msg)
-            except urllib.error.URLError as e:
-                last = str(e)
-                if i < 2:
-                    time.sleep(2 * (i + 1))
-        return None, ("fatal", last)
-
-    img, err = attempt("1024x1536")
-    if img:
-        return img, None
-    kind, msg = err
-    if kind == "size":
-        img2, err2 = attempt("1024x1024")
-        if img2:
-            return img2, None
-        return None, err2[1]
-    return None, msg
+    """Generate once at the supported portrait size; return image or safe error."""
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/images/generations",
+        data=json.dumps({"model":model, "prompt":prompt, "n":1,
+                         "size":"1024x1536", "quality":"high"}).encode(),
+        headers={"Authorization":"Bearer " + key, "Content-Type":"application/json"})
+    return _image_request(req)
 
 
 def hex_to_rgb01(h):
@@ -3994,37 +3967,15 @@ def _mp_file(boundary, name, filename, ctype, data):
 
 
 def _post_images_edits(key, req_body, boundary):
-    """POST a multipart body to /v1/images/edits with retries.
+    """POST a multipart body to /v1/images/edits once.
 
     Returns (b64, None) or (None, error_message).
     """
-    last = "request failed"
-    for i in range(3):
-        req = urllib.request.Request(
-            "https://api.openai.com/v1/images/edits",
-            data=req_body,
-            headers={
-                "Authorization": "Bearer " + key,
-                "Content-Type": "multipart/form-data; boundary=" + boundary.decode(),
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=110) as res:
-                return json.load(res)["data"][0]["b64_json"], None
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and i < 2:
-                time.sleep(2 * (i + 1))
-                continue
-            try:
-                msg = json.loads(e.read().decode())["error"]["message"]
-            except Exception:
-                msg = "request failed"
-            return None, msg
-        except urllib.error.URLError as e:
-            last = str(e)
-            if i < 2:
-                time.sleep(2 * (i + 1))
-    return None, last
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/images/edits", data=req_body,
+        headers={"Authorization":"Bearer " + key,
+                 "Content-Type":"multipart/form-data; boundary=" + boundary.decode()})
+    return _image_request(req)
 
 
 def _edits_boundary():

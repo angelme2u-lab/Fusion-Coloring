@@ -56,6 +56,40 @@ get('importbookbackup').onclick();
 assert.equal(get('loadfile').clickCount,1, 'Import book backup opens the file picker directly');
 
 (async()=>{
+  // Hold a paid request open and attempt every other entry point.
+  const initialFetch = context.fetch;
+  let finishRequest, paidCalls=0;
+  context.fetch=async()=>{paidCalls++;return new Promise(resolve=>{finishRequest=resolve;});};
+  get('subject').value='Reliability test'; get('batchlist').value='Scene one\nScene two';
+  const inFlight = get('compose').onclick();
+  assert.equal(run('busy'),true);
+  for(const id of ['compose','batchstart','cartgen','editapply']) {
+    assert.equal(get(id).disabled,true);
+    await get(id).onclick();
+  }
+  assert.equal(paidCalls,1,'Only the initial request reaches the provider');
+  finishRequest({ok:false,json:async()=>({error:'Test provider unavailable'})});
+  await inFlight;
+  assert.match(get('status').textContent,/Test provider unavailable/);
+  assert.equal(run('busy'),false);
+  for(const id of ['compose','batchstart','cartgen','editapply']) assert.equal(get(id).disabled,false);
+  assert.equal(run('book.length'),0);
+  context.fetch=async()=>{paidCalls++;throw new Error('Test connection lost');};
+  await get('batchstart').onclick();
+  assert.equal(paidCalls,2,'Failed batch stops before requesting its second scene');
+  assert.match(get('batchstatus').textContent,/1 failed.*1 skipped/);
+  assert.equal(run('busy'),false);assert.equal(run('batchRunning'),false);
+  assert.equal(get('batchstop').hidden,true);
+  context.fetch=async()=>{const error=new Error('aborted');error.name='AbortError';throw error;};
+  await get('compose').onclick();
+  assert.match(get('status').textContent,/timed out.*check API usage/);
+  assert.equal(run('busy'),false);
+  context.fetch=async()=>({ok:true,json:async()=>{throw new Error('Bad JSON');}});
+  await get('compose').onclick();
+  assert.match(get('status').textContent,/unreadable response/);
+  assert.equal(run('busy'),false);
+  context.fetch=initialFetch;
+  console.log('PASS: shared generation lock, failed-batch stop, timeout guidance and malformed-response recovery');
   run(`styleReference={name:'approved.png',image:'style-pixels'};
        characters=[{id:'c1',name:'Milo',description:'tabby',refs:['identity-pixels']}];
        renderCharacters();`);

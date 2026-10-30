@@ -41,6 +41,33 @@ class GenerationTests(unittest.TestCase):
         except urllib.error.HTTPError as response:
             return response.code, json.load(response)
 
+    def test_paid_requests_are_not_retried_or_expose_provider_secrets(self):
+        failures = [TimeoutError("test-only-key"),
+                    urllib.error.URLError("test-only-key"),
+                    urllib.error.HTTPError("https://provider",401,"test-only-key",{},None),
+                    urllib.error.HTTPError("https://provider",429,"test-only-key",{},None),
+                    urllib.error.HTTPError("https://provider",503,"test-only-key",{},None)]
+        for failure in failures:
+            for invoke in [lambda: app.generate_image("test-only-key","A cat"),
+                           lambda: app.generate_with_references("test-only-key","A cat",[b"png"])]:
+                with self.subTest(failure=type(failure).__name__), patch.object(
+                        app.urllib.request,"urlopen",side_effect=failure) as send:
+                    image,error = invoke()
+                    self.assertIsNone(image)
+                    self.assertTrue(error)
+                    self.assertNotIn("test-only-key",error)
+                    self.assertEqual(send.call_count,1)
+                    self.assertEqual(send.call_args.kwargs["timeout"],150)
+
+    def test_unreadable_provider_response_returns_recoverable_error(self):
+        for raw in [b"not json",b'{"data":[]}',b'{"data":[{}]}',b'{"data":[{"b64_json":""}]}']:
+            with self.subTest(raw=raw), patch.object(app.urllib.request,"urlopen") as send:
+                send.return_value.__enter__.return_value = BytesIO(raw)
+                image,error = app.generate_image("test-only-key","A cat")
+                self.assertIsNone(image)
+                self.assertIn("unreadable",error)
+                self.assertEqual(send.call_count,1)
+
     def test_audiences_keep_models_and_preserve_original_linework(self):
         for level, model in [("easy", "gpt-image-2.5-flare"),
                              ("medium", "gpt-image-2.5-flare"),
