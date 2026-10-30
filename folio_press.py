@@ -302,6 +302,7 @@ HTML = """<!DOCTYPE html>
   .editmodal { position:fixed; inset:0; background:rgba(26,25,22,.55); display:flex; align-items:center; justify-content:center; z-index:50; padding:1rem; }
   .editmodal[hidden] { display:none; }
   .editbox { background:var(--paper); border-radius:12px; padding:1.2rem 1.4rem; max-width:560px; width:100%; max-height:92vh; overflow:auto; }
+  .editbox #editcanvas { width:auto; height:auto; max-width:100%; max-height:50vh; margin:0 auto; }
   .editbox h2 { margin:0 0 .3rem; font-size:1.2rem; }
   .editbox p { font-size:.85rem; }
   .editbox canvas { width:100%; max-height:50vh; object-fit:contain; background:#fff; border:1px solid var(--line); border-radius:6px; cursor:crosshair; touch-action:none; display:block; }
@@ -468,7 +469,12 @@ HTML = """<!DOCTYPE html>
             <p class="status">Audience changes detail throughout the scene. To change an existing picture’s complexity, compose a new page; strengthening lines only changes the linework.</p>
             <label for="styleref">Artwork style reference (optional)</label>
             <input type="file" id="styleref" accept="image/*">
-            <p class="status" id="stylerefstatus">Use an approved page to guide linework and illustration style.</p>
+            <label for="stylemode">Use reference for</label>
+            <select id="stylemode">
+              <option value="linework">Line quality only — new scene</option>
+              <option value="layout">Full visual reference — similar composition</option>
+            </select>
+            <p class="status" id="stylerefstatus">Line quality only uses measured detail and contrast without copying subjects or scenery.</p>
             <img id="stylerefpreview" alt="Artwork style reference" hidden style="max-width:120px;max-height:150px">
             <button class="ghost" id="clearstyleref" type="button" hidden>Remove style reference</button>
             <label class="check"><input type="checkbox" id="cleanup">Remove gray after generation (keeps the original too)</label>
@@ -797,7 +803,7 @@ HTML = """<!DOCTYPE html>
 <div class="editmodal" id="editmodal" hidden>
   <div class="editbox">
     <h2>Change only this</h2>
-    <p>Paint over the part to change, then describe the fix. Everything else stays exactly as it is.</p>
+    <p>Paint over the part to change, then describe the fix. Only the painted area is replaced; the rest of this picture is preserved. For calmer hair, paint the hair without painting the city.</p>
     <canvas id="editcanvas"></canvas>
     <div class="editrow">
       <label>Brush <input id="brushsize" type="range" min="10" max="120" value="40"></label>
@@ -918,8 +924,11 @@ function renderStyleReference() {
   else preview.removeAttribute('src');
   document.getElementById('clearstyleref').hidden = !styleReference;
   document.getElementById('stylerefstatus').textContent = styleReference
-    ? 'Style reference: ' + styleReference.name
-    : 'Use an approved page to guide linework and illustration style.';
+    ? 'Reference: ' + styleReference.name + (styleReference.mode === 'layout'
+      ? ' · Full image guides composition too. Use Change only this for a small revision.'
+      : ' · Only line quality and detail guide the new scene; the reference picture is not sent to the image model.')
+    : 'Line quality only uses measured detail and contrast without copying subjects or scenery.';
+  document.getElementById('stylemode').value = styleReference?.mode || 'linework';
   refreshBookState();
 }
 
@@ -933,12 +942,15 @@ document.getElementById('styleref').onchange = async (e) => {
       reader.onload = () => downscaleRef(reader.result, resolve, 1536, reject);
       reader.readAsDataURL(file);
     });
-    styleReference = { name: file.name, image };
+    styleReference = { name: file.name, image, mode:document.getElementById('stylemode').value || 'linework' };
     renderStyleReference();
   } catch (err) {
     document.getElementById('stylerefstatus').textContent = 'Could not open that reference. Choose a valid image.';
   }
   e.target.value = '';
+};
+document.getElementById('stylemode').onchange = event => {
+  if (styleReference) { styleReference = {...styleReference,mode:event.target.value}; renderStyleReference(); }
 };
 document.getElementById('clearstyleref').onclick = () => {
   styleReference = null;
@@ -990,7 +1002,7 @@ document.getElementById('reusesettings').onclick = () => {
   saveCharacters();
   renderCharacters();
   document.querySelectorAll('#charchk input').forEach((box) => { box.checked = selectedIds.includes(box.dataset.char); });
-  document.getElementById('status').textContent = 'Settings restored. Edit the scene description, then compose a new page.';
+  document.getElementById('status').textContent = 'Settings restored. Compose makes a new scene; for a small revision, select Change only this and paint the area.';
 };
 document.getElementById('downloadoriginal').onclick = () => {
   const page = book[current];
@@ -1399,7 +1411,7 @@ function selectedCharacters() {
 /* One paid image request at a time in this tab. No automatic browser retries. */
 function setGenerationBusy(value) {
   busy = value;
-  ['compose','batchstart','cartgen','editapply'].forEach(id => {
+  ['compose','batchstart','cartgen','editapply','editcancel','brushclear'].forEach(id => {
     document.getElementById(id).disabled = value;
   });
 }
@@ -1474,7 +1486,8 @@ document.getElementById('batchstart').onclick = async () => {
     st.textContent = 'Composing ' + (done + failed + 1) + ' of ' + scenes.length + ': ' + row.scene;
     try {
       const data = await requestArtwork('/compose', {key, subject:row.scene, level,
-        characters:charPayload, references:charRefs, style_reference:styleImage, cleanup});
+        characters:charPayload, references:charRefs, style_reference:styleImage,
+        style_reference_mode:referenceSnapshot.style?.mode || 'linework', cleanup});
       book.push(generatedPage(data, row.scene, referenceSnapshot));
       row.dot.className = 'qdot done';
       done++;
@@ -1554,7 +1567,8 @@ document.getElementById('compose').onclick = async () => {
   }
   try {
     const data = await requestArtwork('/compose', {key, subject, level,
-      characters:charPayload, references:charRefs, style_reference:styleImage, cleanup});
+      characters:charPayload, references:charRefs, style_reference:styleImage,
+        style_reference_mode:referenceSnapshot.style?.mode || 'linework', cleanup});
     const cur = book[current];
     if (cur && cur.kind === 'art' && !cur.image) {
       Object.assign(cur, generatedPage(data, subject, referenceSnapshot));
@@ -1634,7 +1648,7 @@ function restoreBookDocument(data) {
         } else if (p.image) {
           restoredPages.push({ kind: 'art', image: p.image, caption: p.caption || '', w: p.w || 0, h: p.h || 0,
             generation: p.generation || null, original_image: p.original_image || null,
-            line_treatment: p.line_treatment || null, line_source_image:p.line_source_image || null });
+            line_treatment: p.line_treatment || null, line_source_image:p.line_source_image || null, revisions:p.revisions || [] });
         } else {
           restoredPages.push({ kind: 'blank' });
         }
@@ -1979,6 +1993,7 @@ let editStrokes = [];
 let editPainting = false;
 
 function openEditor(i) {
+  if (busy) return;
   const p = book[i];
   if (!p || p.kind !== 'art' || !p.image) return;
   editPageIndex = i;
@@ -1987,6 +2002,7 @@ function openEditor(i) {
   document.getElementById('editstatus').textContent = '';
   editBase = new Image();
   editBase.onload = () => {
+    if (busy || book[i] !== p) return;
     editCanvas.width = editBase.naturalWidth;
     editCanvas.height = editBase.naturalHeight;
     redrawEditor();
@@ -2017,6 +2033,7 @@ function editorPos(e) {
 }
 
 editCanvas.addEventListener('pointerdown', (e) => {
+  if (busy) return;
   editCanvas.setPointerCapture(e.pointerId);
   editPainting = true;
   const pt = editorPos(e);
@@ -2062,14 +2079,15 @@ document.getElementById('editapply').onclick = async () => {
   const prompt = document.getElementById('editprompt').value.trim();
   if (!editStrokes.length) { st.textContent = 'Paint the area to change first.'; return; }
   if (!key || !prompt) { st.textContent = 'Key and a description of the change are both required.'; return; }
+  const source = book[editPageIndex], sourceIndex = editPageIndex;
   const btn = document.getElementById('editapply');
   setGenerationBusy(true);
   st.textContent = 'Repainting just that area… this takes a little while.';
   try {
-    const data = await requestArtwork('/edit-art', {key, prompt, image:book[editPageIndex].image, mask:buildMaskB64()});
-    const p = book[editPageIndex];
-    book.splice(editPageIndex + 1, 0,
-      { kind: 'art', image: data.image, caption: p.caption ? p.caption + ' (revised)' : 'Revised copy' });
+    const data = await requestArtwork('/edit-art', {key, prompt, image:source.image, mask:buildMaskB64(),
+      scene_subject:source.generation?.subject || source.caption || ''});
+    if (book[sourceIndex] !== source) throw new Error('The selected page changed. Keep this book open while editing.');
+    book.splice(sourceIndex + 1, 0, revisedPage(source, data.image, prompt, data.edit));
     editModal.hidden = true;
     renderCount();
     renderThumbs();
@@ -2080,6 +2098,15 @@ document.getElementById('editapply').onclick = async () => {
     st.textContent = e.message || 'The image request failed. Your existing artwork is unchanged.';
   } finally { setGenerationBusy(false); }
 };
+
+function revisedPage(source, image, prompt, edit) {
+  return {...source, image,
+    caption:source.caption ? source.caption + ' (revised)' : 'Revised copy',
+    generation:source.generation ? JSON.parse(JSON.stringify(source.generation)) : null,
+    original_image:source.original_image || source.image,
+    line_treatment:null, line_source_image:null,
+    revisions:[...(source.revisions || []), {prompt,...edit,created_at:new Date().toISOString()}]};
+}
 
 /* ---- Strengthen lines ---- */
 function strengthenPixels(src, w, h, mode) {
@@ -2205,6 +2232,7 @@ function strengthenedPage(source, image, mode) {
     original_image: source.original_image || source.image,
     line_source_image: source.line_source_image || (source.line_treatment && source.original_image) || source.image,
     w:source.w, h:source.h,
+    revisions:source.revisions ? JSON.parse(JSON.stringify(source.revisions)) : [],
     line_treatment: { version:'tonal-1', mode, created_at: new Date().toISOString() } };
 }
 
@@ -2787,6 +2815,7 @@ async function flushCreationSave(attempt = 0) {
   return ok;
 }
 async function saveBeforeSwitch() {
+  if (busy) { creationStatus('Wait for the image request to finish before switching books.'); return false; }
   if (await flushCreationSave()) return true;
   return !creationsReady && confirm('This book could not save to My Books. Only continue if you have a downloaded backup of these pages. Switch books?');
 }
@@ -3992,7 +4021,7 @@ def _edits_fields(boundary, prompt, model="gpt-image-2.5-flare"):
             _mp_field(boundary, "quality", "high"))
 
 
-COLORING_PROMPT_VERSION = "2026-10-scene-intent-4"
+COLORING_PROMPT_VERSION = "2026-10-reference-roles-5"
 COLORING_STANDARD = (
     "Create one polished portrait black-and-white coloring-book illustration. "
     "Expressive appealing subjects, natural poses, distinct personality, and believable anatomy. "
@@ -4044,7 +4073,7 @@ COLORING_AUDIENCES = {
 CREATOR_SCENE_POLICY = (
     "Scene fidelity: The creator's requested action, age, expression and exclusions take priority over embellishment. "
     "Do not add castles, palaces, towers, cottages, bridges or other built structures unless the creator requests them. "
-    "A fantasy dress or unicorn does not imply a castle or royal setting. "
+    "Genre cues do not authorize extra anatomy, props or scenery. "
     "When buildings or structures are excluded, keep the background entirely natural, including distant scenery. "
     "Do not import unrequested structures or poses from style or character reference backgrounds. "
     "When riding is requested, show the rider visibly seated on the animal with credible contact and leg placement, "
@@ -4053,13 +4082,36 @@ CREATOR_SCENE_POLICY = (
 )
 
 
+def linework_reference_guide(image_bytes):
+    if not HAS_PIL:
+        raise ValueError("Line quality reference needs image processing. Choose Full visual reference or remove the reference.")
+    with _PILImage.open(BytesIO(image_bytes)) as image:
+        image = image.convert("RGBA")
+        background = _PILImage.new("RGBA", image.size, "white")
+        background.alpha_composite(image)
+        gray = background.convert("L")
+        gray.thumbnail((384,384))
+        histogram = gray.histogram()
+    total = sum(histogram)
+    dark = sum(histogram[:128]) / total
+    pale = sum(histogram[220:]) / total
+    detail = "denser line coverage" if dark > .13 else "lighter, spacious line coverage"
+    contrast = "crisp dark line cores" if dark > .06 else "delicate lighter lines"
+    space = "generous open white spaces" if pale > .65 else "clear white spaces between detailed groups"
+    return ("\nMeasured line-quality reference (no reference image is supplied): aim for " +
+            detail + ", " + contrast + ", and " + space + ". " +
+            "Audience complexity overrides this guidance. This describes pixel density and contrast only; "
+            "derive all subjects, anatomy and scenery from the creator's written request. ")
+
+
 def coloring_prompt(subject, level, characters, has_style_reference=False):
     prompt = COLORING_STANDARD + COLORING_AUDIENCES[level] + CREATOR_SCENE_POLICY
     if has_style_reference:
         prompt += (
             "The FIRST input image is an approved ARTWORK STYLE reference: follow its illustration quality, "
             "line clarity, expressive character treatment, and colorable shapes. "
-            "Create the requested scene rather than copying its composition, objects, or lettering. "
+            "Use linework, not its anatomy or facial identity: horns, wings, hairstyle and scenery must come from the written request. "
+            "The reference is not an instruction to copy its subjects. Create the requested scene rather than copying its composition, objects, or lettering. "
             "The audience instructions above override reference complexity across the entire scene. "
             "Any following input images are CHARACTER IDENTITY references, not new scene layouts. " 
         )
@@ -4085,8 +4137,37 @@ def coloring_prompt(subject, level, characters, has_style_reference=False):
     prompt += ("\nFinal audience direction: honor the specific requested action, subject expression, and scene layout while applying the selected audience's scene complexity throughout, "
                "including when the requested scene or reference contains more or less detail. ")
     prompt += COLORING_AUDIENCES[level]
+    if any(animal in subject.lower() for animal in ("horse", "pegasus")) and any(
+            term in subject.lower() for term in ("not a unicorn", "no unicorn", "no horn", "without a horn")):
+        prompt += "\nAnatomy constraint: a horse with a smooth horn-free forehead; no horn or horn-like ornament. "
     prompt += "\nFinal scene check: " + CREATOR_SCENE_POLICY + "\nFollow this exact request: " + subject
     return prompt
+
+
+def prepare_protected_edit(image_bytes, mask_bytes):
+    if not HAS_PIL:
+        raise ValueError("Image editing is unavailable because image processing is not ready.")
+    with _PILImage.open(BytesIO(image_bytes)) as source:
+        original = source.convert("RGBA")
+    with _PILImage.open(BytesIO(mask_bytes)) as source:
+        if "A" not in source.getbands():
+            raise ValueError("Paint a change area on a transparent mask.")
+        alpha = source.getchannel("A")
+    if original.size != alpha.size:
+        raise ValueError("The painted area must match the picture size.")
+    if alpha.getextrema() == (255,255):
+        raise ValueError("Paint the area to change first.")
+    return original, alpha.point(lambda value:255-value)
+
+
+def composite_protected_edit(original, selection, generated):
+    with _PILImage.open(BytesIO(base64.b64decode(generated,validate=True))) as edited:
+        replacement = edited.convert("RGBA")
+    if replacement.size != original.size:
+        replacement = replacement.resize(original.size, _PILImage.Resampling.LANCZOS)
+    result = _PILImage.composite(replacement, original, selection)
+    stream = BytesIO(); result.save(stream,format="PNG")
+    return base64.b64encode(stream.getvalue()).decode()
 
 
 def edit_image(key, prompt, image_bytes, mask_bytes):
@@ -4095,7 +4176,7 @@ def edit_image(key, prompt, image_bytes, mask_bytes):
     Mask convention: transparent areas are repainted, opaque areas are kept.
     """
     boundary = _edits_boundary()
-    req_body = (_edits_fields(boundary, prompt) +
+    req_body = (_edits_fields(boundary, prompt, "gpt-image-2.5-sunburst") +
                 _mp_file(boundary, "image", "image.png", "image/png", image_bytes) +
                 _mp_file(boundary, "mask", "mask.png", "image/png", mask_bytes) +
                 _edits_end(boundary))
@@ -4157,13 +4238,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "Choose children, teens, or adults complexity."})
             return
         style_reference = body.get("style_reference")
-        prompt = coloring_prompt(subject, level, body.get("characters") or [], bool(style_reference))
+        reference_mode = body.get("style_reference_mode") or "linework"
+        if reference_mode not in ("linework", "layout"):
+            self._json(400, {"error":"Choose a valid reference mode."})
+            return
+        prompt = coloring_prompt(subject, level, body.get("characters") or [], bool(style_reference) and reference_mode == "layout")
 
         references = body.get("references") or []
         ref_images = []
         try:
             if style_reference:
-                ref_images.append(base64.b64decode(style_reference, validate=True))
+                style_bytes = base64.b64decode(style_reference, validate=True)
+                if reference_mode == "layout":
+                    ref_images.append(style_bytes)
+                else:
+                    prompt = linework_reference_guide(style_bytes) + prompt
             for r in references:
                 if r:
                     ref_images.append(base64.b64decode(r, validate=True))
@@ -4197,7 +4286,7 @@ class Handler(BaseHTTPRequestHandler):
                 "prompt": prompt, "subject": subject, "level": level,
                 "model": model, "quality": "high", "cleanup": cleanup,
                 "width": width, "height": height,
-                "reference_count": len(ref_images),
+                "reference_count": len(ref_images), "style_reference_mode":reference_mode if style_reference else None,
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             },
         }
@@ -4318,23 +4407,26 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             image_bytes = base64.b64decode(image_b64)
-            mask_bytes = base64.b64decode(mask_b64)
+            mask_bytes = base64.b64decode(mask_b64, validate=True)
+            original, selection = prepare_protected_edit(image_bytes, mask_bytes)
         except Exception:
-            self._json(400, {"error": "Could not read the image or mask."})
+            self._json(400, {"error": "Could not read the picture or painted area. Paint an area on this picture before editing."})
             return
         prompt = ("Revise only the requested area while preserving the original composition, characters, "
                   "pose and age unless the creator explicitly asks to change them. " + CREATOR_SCENE_POLICY +
+                  "\nOriginal scene to preserve unless explicitly changed: " + str(body.get("scene_subject") or "") +
                   "\nRequested edit: " + prompt)
         image, err = edit_image(key, prompt, image_bytes, mask_bytes)
         if err:
             self._json(400, {"error": err})
             return
         try:
+            image = composite_protected_edit(original, selection, image)
             png_to_rgb(base64.b64decode(image))
         except Exception as e:
             self._json(400, {"error": "The edited picture came back unreadable (" + str(e) + "). Try again."})
             return
-        self._json(200, {"image": image})
+        self._json(200, {"image": image, "edit":{"model":"gpt-image-2.5-sunburst", "protected_outside_mask":True}})
 
     def _json(self, code, payload):
         raw = json.dumps(payload).encode()

@@ -89,6 +89,22 @@ assert.equal(get('loadfile').clickCount,1, 'Import book backup opens the file pi
   get('strsave').onclick();
   assert.equal(run('book.length'),beforePrematureSave,'Cannot save a stale or unfinished preview');
   console.log('PASS: gradual darkening, untouched white gaps, non-stacking copies and stale-preview save guard');
+  // Scene-preserving revisions retain source context through backup restoration.
+  context.revisionSource={kind:'art',image:'city-and-rider',caption:'A rider over a city',w:1024,h:1536,
+    generation:{subject:'A rider over a city',level:'detailed',references:{style:{name:'example',image:'style-data',mode:'linework'}}},
+    line_treatment:{mode:'balanced'},line_source_image:'before-lines'};
+  const revised=run("revisedPage(revisionSource,'calmer-hair','Calmer hair',{protected_outside_mask:true})");
+  assert.equal(revised.generation.subject,'A rider over a city');
+  assert.equal(revised.original_image,'city-and-rider');
+  assert.equal(revised.line_treatment,null);assert.equal(revised.line_source_image,null);
+  assert.equal(revised.revisions[0].protected_outside_mask,true);
+  assert.equal(revised.generation.references.style.mode,'linework');
+  context.revisionBackup={pages:[revised]};
+  run('restoreBookDocument(revisionBackup)');
+  assert.equal(run('book[0].revisions[0].prompt'),'Calmer hair');
+  assert.equal(run('styleReference'),null);
+  run('book.splice(0,book.length)');
+  console.log('PASS: revisions retain scene/settings/provenance and restore without stale line treatment');
   // Hold a paid request open and attempt every other entry point.
   const initialFetch = context.fetch;
   let finishRequest, paidCalls=0;
@@ -123,7 +139,7 @@ assert.equal(get('loadfile').clickCount,1, 'Import book backup opens the file pi
   assert.equal(run('busy'),false);
   context.fetch=initialFetch;
   console.log('PASS: shared generation lock, failed-batch stop, timeout guidance and malformed-response recovery');
-  run(`styleReference={name:'approved.png',image:'style-pixels'};
+  run(`styleReference={name:'approved.png',image:'style-pixels',mode:'linework'};
        characters=[{id:'c1',name:'Milo',description:'tabby',refs:['identity-pixels']}];
        renderCharacters();`);
   inputs()[0].checked=true;
@@ -151,6 +167,8 @@ assert.equal(get('loadfile').clickCount,1, 'Import book backup opens the file pi
   const saved=JSON.parse(await savedBlob.text());
   assert.equal(saved.version,4);
   assert.equal(saved.pages[0].generation.references.style.name,'approved.png');
+  assert.equal(saved.pages[0].generation.references.style.mode,'linework');
+  assert.equal(requests[0].style_reference_mode,'linework');
   assert.equal(JSON.stringify(saved).includes('test-only-key'),false);
   get('loadfile').files=[{name:'My cats-2.json',text:JSON.stringify(saved)}];
   await get('loadfile').onchange();
