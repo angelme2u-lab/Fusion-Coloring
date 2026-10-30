@@ -102,7 +102,8 @@ class GenerationTests(unittest.TestCase):
         self.assertIn("realistic anatomy", prompt)
         self.assertIn("foreground, middle distance", prompt)
         self.assertIn("never by thickening outlines", prompt)
-        self.assertTrue(prompt.endswith(app.COLORING_AUDIENCES["medium"]))
+        self.assertIn(app.COLORING_AUDIENCES["medium"],prompt)
+        self.assertTrue(prompt.endswith("A realistic unicorn. Very simple children's scenery."))
         self.assertEqual(result["generation"]["prompt_version"], app.COLORING_PROMPT_VERSION)
         self.assertEqual(result["generation"]["level"], "medium")
 
@@ -133,6 +134,22 @@ class GenerationTests(unittest.TestCase):
         self.assertIn("no jewelry means no pendants", prompt)
         self.assertIn("Do not substitute similar decorations", prompt)
         self.assertIn("without jewelry or castle", prompt)
+
+    def test_woodland_rider_constraints_survive_all_audiences_and_references(self):
+        subject = ("Create a beautiful image of emotion with the young girl wearing fantasy dress "
+                   "that is soft and luxurious while riding the unicorn through the woods with "
+                   "no buildings in the background, looks of pure contentment on their faces.")
+        for audience in app.COLORING_AUDIENCES:
+            for reference in (True,False):
+                with self.subTest(audience=audience,reference=reference):
+                    prompt=app.coloring_prompt(subject,audience,[],reference)
+                    self.assertTrue(prompt.endswith(subject))
+                    self.assertIn("rider visibly seated",prompt)
+                    self.assertIn("background entirely natural",prompt)
+                    self.assertIn("unless the creator requests them",prompt)
+                    self.assertIn("never change its action",prompt)
+                    self.assertIn("graceful weight, drape",prompt)
+                    self.assertNotIn("readable rocks and architecture",prompt)
 
     def test_desktop_studio_preview_layout_contract(self):
         html = app.HTML
